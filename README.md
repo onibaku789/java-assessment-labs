@@ -12,7 +12,7 @@ sdk env
 ./mvnw --version
 ```
 
-The Maven Wrapper downloads Maven 3.10.2 on first use. Surefire runs the six JUnit Jupiter smoke tests. Failsafe discovers the eight weekly JUnit integration suites during `verify`. Week 5 is enabled on the starter, so a full build starts with **seven passing tests**. Start Docker before running the full build.
+The Maven Wrapper downloads Maven 3.10.2 on first use. Surefire runs the six JUnit Jupiter smoke tests. Failsafe discovers the integration suites for all eight weeks during `verify`. Start Docker before running the full build.
 
 ```bash
 ./mvnw test       # Smoke tests across all three projects
@@ -46,7 +46,7 @@ New commits pushed to the same branch update the pull request and rerun CI. Once
 
 ### Start Week 1
 
-Open [Week01ParcelIT.java](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) and remove the class annotation `@Disabled("Enable when starting Week 1")`. Leave completed weeks enabled so they continue to run. Run the Week 1 suite from the repository root.
+Run the Week 1 suite from the repository root with Docker running. Its HTTP contract tests use H2. Its PostgreSQL tests start the app on a temporary port and use a disposable database.
 
 ```bash
 ./mvnw -pl parcel-api -Dit.test=Week01ParcelIT verify
@@ -66,7 +66,7 @@ To repeat that method, add its name to the Failsafe filter.
 
 | Week and JUnit suite | What to demonstrate |
 | --- | --- |
-| 1 · [Parcel creation](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) | Persist a parcel, follow its location, reject invalid data, handle a replay and preserve the original read behavior. |
+| 1 · [Parcel creation](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) | Persist a parcel, follow its location, preserve the original read behavior, handle concurrent duplicates, and reject invalid or oversized input. |
 | 2 · [API security](parcel-api/src/test/java/study/parcel/Week02SecurityIT.java) | Accept a reader, deny an observer, validate signatures and claims, and allow browser preflight. |
 | 3 · [SOAP carrier](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java) | Implement the [carrier adapter](parcel-api/src/main/java/study/parcel/CarrierClient.java). Return the status on success, an empty result for an unknown parcel, and an I/O error within five seconds for a stalled request. JUnit starts a loopback Java HTTP fixture. |
 | 4 · [Shipment delivery](shipment-worker/src/test/java/study/parcel/Week04DeliveryIT.java) | Write one receipt per event under concurrent delivery or replay and recover from a failed write. |
@@ -75,9 +75,9 @@ To repeat that method, add its name to the Failsafe filter.
 | 7 · [Scaling and rollback](release-lab/src/test/java/study/parcel/Week07OperationsIT.java) | Generate CPU load with the HPA enabled, deploy a bad revision, then roll back. Run locally after recovery while scaling events remain available. |
 | 8 · [SQL query plan](parcel-api/src/test/java/study/parcel/Week08SqlIT.java) | Return the same 100 Bath parcels with fewer PostgreSQL shared-buffer accesses than the sequential-scan baseline. Apply the index on a fresh database. |
 
-Weeks 1 and 2 use in-memory H2. Week 1 exercises HTTP and persistence with security filters disabled. Week 2 runs the real filter chain and provides an ephemeral RSA public key through `spring.security.oauth2.resourceserver.jwt.public-key-location`. Use that property in your decoder. The issuer is `urn:parcel:study`, the audience is `parcel-api`, and the scopes are `parcel.read` and `parcel.observe`.
+The Week 1 H2 tests exercise HTTP and persistence with security filters disabled. The Week 2 H2 suite runs the real filter chain and provides an ephemeral RSA public key through `spring.security.oauth2.resourceserver.jwt.public-key-location`. Use that property in your decoder. The issuer is `urn:parcel:study`, the audience is `parcel-api`, and the scopes are `parcel.read` and `parcel.observe`.
 
-Weeks 4, 5 and 8 use Testcontainers with a running Docker engine. Weeks 6 and 7 read the dedicated kind cluster created by the release quick start below. The tests use the Kubernetes API to read the Helm release history and sample traffic through the Service proxy. Remove the weekly `@Disabled` annotation to enable either suite locally. Keep the GitHub Actions condition on both classes.
+Weeks 1, 4, 5 and 8 use Testcontainers with a running Docker engine. Weeks 6 and 7 read the dedicated kind cluster created by the release quick start below. The tests use the Kubernetes API to read the Helm release history and sample traffic through the Service proxy. Remove the weekly `@Disabled` annotation to enable either suite locally. Keep the GitHub Actions condition on both classes.
 
 ### Continuous integration
 
