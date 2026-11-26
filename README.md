@@ -4,14 +4,22 @@ Build a parcel tracking API, make shipment processing safe to retry, and operate
 
 ## Run the tests
 
-Run Maven from the folder containing this README. Surefire runs the six JUnit Jupiter smoke tests. Failsafe discovers the eight weekly JUnit integration suites during `verify`. Week 5 is enabled on the starter, so a full build starts with **seven passing tests**. Start Docker before running the full build. These commands use Java 25 and Maven from your path.
+From the repository root, install the project JDK once with SDKMAN and select it in each new shell. [SDKMAN installation](https://sdkman.io/install/)
 
 ```bash
-mvn test       # Smoke tests across all three projects
-mvn verify     # Smoke tests plus every enabled weekly suite
+sdk env install
+sdk env
+./mvnw --version
 ```
 
-For the same JDK and Maven versions as CI, use `./toolchain.sh mvn verify`. In IntelliJ IDEA, open the root `pom.xml` as a Maven project, select JDK 25, and run **Lifecycle → verify** in the root Maven project. Each weekly class and its methods also have JUnit run actions.
+The Maven Wrapper downloads Maven 3.10.2 on first use. Surefire runs the six JUnit Jupiter smoke tests. Failsafe discovers the eight weekly JUnit integration suites during `verify`. Week 5 is enabled on the starter, so a full build starts with **seven passing tests**. Start Docker before running the full build.
+
+```bash
+./mvnw test       # Smoke tests across all three projects
+./mvnw verify     # Smoke tests plus every enabled weekly suite
+```
+
+In IntelliJ IDEA, open the root `pom.xml` as a Maven project, select the SDKMAN Temurin 25 JDK and **Maven Wrapper** distribution, and run **Lifecycle → verify** in the root Maven project. Each weekly class and its methods also have JUnit run actions.
 
 ### Work on a branch and merge into main
 
@@ -26,7 +34,7 @@ git switch -c feat/week-01-parcel-creation
 Enable the Week 1 suite, implement the exercise, and run the tests. Then publish your branch and open a pull request.
 
 ```bash
-./toolchain.sh mvn verify
+./mvnw verify
 git add parcel-api/
 git diff --cached
 git commit -m "Implement parcel creation"
@@ -41,7 +49,7 @@ New commits pushed to the same branch update the pull request and rerun CI. Once
 Open [Week01ParcelIT.java](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) and remove the class annotation `@Disabled("Enable when starting Week 1")`. Leave completed weeks enabled so they continue to run. Run the Week 1 suite from the repository root.
 
 ```bash
-mvn -pl parcel-api -Dit.test=Week01ParcelIT verify
+./mvnw -pl parcel-api -Dit.test=Week01ParcelIT verify
 ```
 
 Start with `createReturns201AndLocationThatRetrievesThePersistedParcel`. On the starter it expects **201 Created** and receives **405 Method Not Allowed**. Implement `POST /parcels` in [ParcelController.java](parcel-api/src/main/java/study/parcel/ParcelController.java). The test sends the JSON below, then retrieves the saved parcel using the response’s `Location` header.
@@ -53,7 +61,7 @@ Start with `createReturns201AndLocationThatRetrievesThePersistedParcel`. On the 
 To repeat that method, add its name to the Failsafe filter.
 
 ```bash
-mvn -pl parcel-api '-Dit.test=Week01ParcelIT#createReturns201AndLocationThatRetrievesThePersistedParcel' verify
+./mvnw -pl parcel-api '-Dit.test=Week01ParcelIT#createReturns201AndLocationThatRetrievesThePersistedParcel' verify
 ```
 
 | Week and JUnit suite | What to demonstrate |
@@ -73,19 +81,19 @@ Weeks 4, 5 and 8 use Testcontainers with a running Docker engine. Weeks 6 and 7 
 
 ### Continuous integration
 
-[GitHub Actions](.github/workflows/ci.yml) runs `mvn --batch-mode --no-transfer-progress --fail-at-end verify` for pull requests targeting `main`, pushes to `main`, and manual runs. An enabled failing test fails the build. Open the run’s **junit-reports** artifact for Surefire and Failsafe XML, including failures and skips. Locally the same files are under each module’s `target/surefire-reports/` and `target/failsafe-reports/`.
+[GitHub Actions](.github/workflows/ci.yml) uses the official Eclipse Temurin 25 JDK container to run `./mvnw --batch-mode --no-transfer-progress --fail-at-end verify` for pull requests targeting `main`, pushes to `main`, and manual runs. An enabled failing test fails the build. Open the run’s **junit-reports** artifact for Surefire and Failsafe XML, including failures and skips. Locally the same files are under each module’s `target/surefire-reports/` and `target/failsafe-reports/`.
 
 ## Start with the parcel API
 
-Use macOS or Linux with Docker Compose, Bash, curl, tar and shasum. The shared launcher downloads Java 25 LTS and Maven on first use. The browser, token and carrier exercises also use Python 3.15.2 and OpenSSL. All services run locally.
+Use macOS or Linux with Docker Compose, Bash, curl, tar and shasum. Run `sdk env` from the project root before starting a lab in a new terminal. The browser, token and carrier exercises also use Python 3.15.2 and OpenSSL. All services run locally.
 
 Run these commands from the folder containing this README.
 
 ```bash
 cd parcel-api
 docker compose up -d --wait
-../toolchain.sh mvn clean package
-../toolchain.sh java -jar target/parcel-api-1.0.0.jar
+../mvnw clean package
+java -jar target/parcel-api-1.0.0.jar
 ```
 
 In a second terminal, run `curl -i http://127.0.0.1:18081/parcels/P-100`. Expect HTTP 200 with status `IN_TRANSIT`. Your first change is to let a caller create another parcel and retrieve it at the URL returned by the API.
@@ -105,7 +113,7 @@ Open a terminal at the project root. Start the emulators and follow one event th
 ```bash
 cd shipment-worker
 docker compose up -d
-../toolchain.sh mvn clean package
+../mvnw clean package
 ./worker.sh init
 ./worker.sh send fixtures/delivered.json
 ./worker.sh once
