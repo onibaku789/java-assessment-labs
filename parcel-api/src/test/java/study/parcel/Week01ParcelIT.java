@@ -4,6 +4,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.GeneralSecurityException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -186,9 +187,14 @@ class Week01ParcelIT extends ParcelTestKeys {
             http.close();
         }
 
-        private HttpRequest create(String id, String status, String destination) {
+        private HttpRequest.Builder authenticatedRequest(URI uri) throws GeneralSecurityException {
+            return HttpRequest.newBuilder(uri).timeout(TIMEOUT)
+                    .header("Authorization", bearer(TRUSTED, readerClaims()));
+        }
+
+        private HttpRequest create(String id, String status, String destination) throws GeneralSecurityException {
             var body = json.writeValueAsString(Map.of("trackingId", id, "status", status, "destination", destination));
-            return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/parcels")).timeout(TIMEOUT)
+            return authenticatedRequest(URI.create("http://127.0.0.1:" + port + "/parcels"))
                     .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build();
         }
 
@@ -202,8 +208,8 @@ class Week01ParcelIT extends ParcelTestKeys {
             db.update("INSERT INTO parcel (tracking_id, status, destination, created_at) VALUES (?, ?, ?, ?)",
                     "P-CREATED-AT", "IN_TRANSIT", "York", Timestamp.from(createdAt));
 
-            var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/parcels/P-CREATED-AT"))
-                    .timeout(TIMEOUT).GET().build();
+            var request = authenticatedRequest(URI.create("http://127.0.0.1:" + port + "/parcels/P-CREATED-AT"))
+                    .GET().build();
             var response = http.send(request, ofString());
             assertThat(response.statusCode()).isEqualTo(200);
             assertThat(Instant.parse(json.readTree(response.body()).required("createdAt").asString())).isEqualTo(createdAt);
@@ -257,7 +263,7 @@ class Week01ParcelIT extends ParcelTestKeys {
             var created = http.send(request, ofString());
             if (created.statusCode() == 201) {
                 var location = created.headers().firstValue("Location").orElseThrow();
-                var get = HttpRequest.newBuilder(request.uri().resolve(location)).timeout(TIMEOUT).GET().build();
+                var get = authenticatedRequest(request.uri().resolve(location)).GET().build();
                 var fetched = http.send(get, ofString());
                 assertThat(fetched.statusCode()).as("GET %s for ID '%s'", location, id).isEqualTo(200);
                 assertThat(json.readTree(fetched.body()).required("trackingId").asString()).isEqualTo(id);
@@ -283,7 +289,7 @@ class Week01ParcelIT extends ParcelTestKeys {
             var created = http.send(request, ofString());
             assertThat(created.statusCode()).as("32-character tracking ID and 64-character destination").isEqualTo(201);
             var location = request.uri().resolve(created.headers().firstValue("Location").orElseThrow());
-            var fetched = http.send(HttpRequest.newBuilder(location).timeout(TIMEOUT).GET().build(), ofString());
+            var fetched = http.send(authenticatedRequest(location).GET().build(), ofString());
             assertThat(fetched.statusCode()).isEqualTo(200);
             var parcel = json.readTree(fetched.body());
             assertThat(parcel.required("trackingId").asString()).isEqualTo(id);
