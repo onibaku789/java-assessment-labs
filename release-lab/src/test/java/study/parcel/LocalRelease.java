@@ -18,7 +18,7 @@ import org.junit.jupiter.api.TestInstance;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class LocalRelease {
@@ -29,11 +29,10 @@ abstract class LocalRelease {
 
     @BeforeAll void connectToLab() {
         Path lab = Files.isDirectory(Path.of("release-lab")) ? Path.of("release-lab/.lab") : Path.of(".lab");
-        assertTrue(Files.isRegularFile(lab.resolve("cluster-owned")),
-                "Start the local lab with ./cluster.sh up and ./deploy.sh in release-lab.");
+        assertThat(lab.resolve("cluster-owned")).as("Start the local lab with ./cluster.sh up and ./deploy.sh in release-lab.")
+                .isRegularFile();
         var config = Config.fromKubeconfig("kind-parcel-study", lab.resolve("kubeconfig").toFile());
-        assertEquals("127.0.0.1", URI.create(config.getMasterUrl()).getHost(),
-                "The lab kubeconfig must point to the local kind API server.");
+        assertThat(URI.create(config.getMasterUrl()).getHost()).as("Local kind API server").isEqualTo("127.0.0.1");
         cluster = new KubernetesClientBuilder().withConfig(config).build();
     }
 
@@ -80,7 +79,7 @@ abstract class LocalRelease {
                 history.put(revision.number(), revision);
             }
         }
-        assertFalse(history.isEmpty(), "Deploy the parcel Helm release in the local lab.");
+        assertThat(history).as("Deploy the parcel Helm release in the local lab.").isNotEmpty();
         return history;
     }
 }

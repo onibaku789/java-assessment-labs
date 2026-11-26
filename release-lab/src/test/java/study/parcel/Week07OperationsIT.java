@@ -8,17 +8,16 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @Disabled("Enable when starting Week 7")
 @DisabledIfEnvironmentVariable(named = "GITHUB_ACTIONS", matches = "true", disabledReason = "Uses the learner's local kind cluster")
 class Week07OperationsIT extends LocalRelease {
     @Test void hpaScaledAboveItsMinimumInResponseToCpuLoad() {
         var hpa = cluster.autoscaling().v2().horizontalPodAutoscalers().inNamespace(NAMESPACE).withName("parcel").get();
-        assertNotNull(hpa, "Enable autoscale in the parcel chart.");
-        assertTrue(hpa.getSpec().getMetrics().stream().anyMatch(metric ->
-                "Resource".equals(metric.getType()) && "cpu".equals(metric.getResource().getName())),
-                "Configure the HPA to scale on CPU.");
+        assertThat(hpa).as("Enable autoscale in the parcel chart.").isNotNull();
+        assertThat(hpa.getSpec().getMetrics()).as("Configure the HPA to scale on CPU.")
+                .anyMatch(metric -> "Resource".equals(metric.getType()) && "cpu".equals(metric.getResource().getName()));
         var events = get(CORE_API + "/events?fieldSelector=involvedObject.kind%3DHorizontalPodAutoscaler%2CinvolvedObject.name%3Dparcel");
         var sizes = new ArrayList<Integer>();
         var newSize = Pattern.compile("New size:\\s*(\\d+)");
@@ -32,23 +31,24 @@ class Week07OperationsIT extends LocalRelease {
                 }
             }
         }
-        assertTrue(sizes.stream().anyMatch(size -> size > hpa.getSpec().getMinReplicas()),
-                () -> "Generate sustained /work traffic with metrics enabled. Observed CPU scaling decisions " + sizes);
+        assertThat(sizes).as("CPU scaling decisions after sustained /work traffic")
+                .anyMatch(size -> size > hpa.getSpec().getMinReplicas());
     }
 
     @Test void rollbackRestoredAHealthyReleaseAndTraffic() throws IOException {
         var history = history();
         var current = history.lastEntry().getValue();
         int target = current.info().path("rollback_revision").asInt(0);
-        assertTrue(target > 0, "Release accepting=false, diagnose it, then run helm rollback.");
-        assertTrue(history.containsKey(target) && target < current.number(), "Keep the healthy target revision in Helm history.");
-        assertTrue(history.subMap(target, false, current.number(), false).values().stream()
-                        .anyMatch(revision -> !revision.value("accepting").booleanValue()),
-                "The intervening revision should have accepting=false.");
-        assertTrue(history.get(target).value("accepting").booleanValue(), "Choose a healthy rollback target.");
-        assertTrue(current.value("accepting").booleanValue(), "The current revision should accept traffic.");
-        assertEquals("deployed", current.info().required("status").asString());
+        assertThat(target).as("Release accepting=false, diagnose it, then run helm rollback.").isPositive();
+        assertThat(history).as("Keep the healthy target revision in Helm history.").containsKey(target);
+        assertThat(target).as("Rollback target revision").isLessThan(current.number());
+        assertThat(history.subMap(target, false, current.number(), false).values())
+                .as("The intervening revision should have accepting=false.")
+                .anyMatch(revision -> !revision.value("accepting").booleanValue());
+        assertThat(history.get(target).value("accepting").booleanValue()).as("Choose a healthy rollback target.").isTrue();
+        assertThat(current.value("accepting").booleanValue()).as("The current revision should accept traffic.").isTrue();
+        assertThat(current.info().required("status").asString()).isEqualTo("deployed");
         var counts = sampleReplicas();
-        assertTrue(counts.size() >= 2, () -> "Expect 30 successful requests across at least two replicas. Observed " + counts);
+        assertThat(counts).as("Replicas serving the 30 requests").hasSizeGreaterThanOrEqualTo(2);
     }
 }

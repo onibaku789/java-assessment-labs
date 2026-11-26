@@ -34,17 +34,15 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.NestedTestConfiguration;
 import org.springframework.test.context.junit.jupiter.SpringExtensionConfig;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import static java.net.http.HttpResponse.BodyHandlers.ofString;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.awaitility.Awaitility.await;
-import static org.junit.jupiter.api.Assertions.assertAll;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 // Keep the enclosing MockMvc fields bound to the H2 context when JUnit runs a nested PostgreSQL test.
 @SpringExtensionConfig(useTestClassScopedExtensionContext = true)
@@ -54,39 +52,39 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Transactional
 class Week01ParcelIT extends ParcelTestKeys {
     @Autowired
-    MockMvc http;
+    MockMvcTester http;
     @Autowired
     JdbcTemplate db;
     @Autowired
     ObjectMapper json;
 
-    private ResultActions create(String id, String destination) throws Exception {
+    private MvcTestResult create(String id, String destination) throws Exception {
         return postParcel(json.writeValueAsString(Map.of(
                 "trackingId", id, "status", "IN_TRANSIT", "destination", destination)));
     }
 
-    private ResultActions postParcel(String body) throws Exception {
-        return http.perform(post("/parcels").contentType(MediaType.APPLICATION_JSON).content(body));
+    private MvcTestResult postParcel(String body) throws Exception {
+        return http.post().uri("/parcels").contentType(MediaType.APPLICATION_JSON).content(body).exchange();
     }
 
     @Test
     void createReturns201AndLocationThatRetrievesThePersistedParcel() throws Exception {
-        var response = create("P-201", "Leeds").andExpect(status().isCreated())
-                .andExpect(header().exists("Location")).andReturn().getResponse();
-        URI location = URI.create(response.getHeader("Location"));
-        http.perform(get(URI.create("http://localhost/parcels").resolve(location)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.trackingId").value("P-201"))
-                .andExpect(jsonPath("$.status").value("IN_TRANSIT"))
-                .andExpect(jsonPath("$.destination").value("Leeds"));
+        var created = create("P-201", "Leeds");
+        assertThat(created).hasStatus(201).containsHeader("Location");
+        URI location = URI.create(created.getResponse().getHeader("Location"));
+        var lookup = http.get().uri(URI.create("http://localhost/parcels").resolve(location));
+        var body = assertThat(lookup).hasStatusOk().bodyJson();
+        body.extractingPath("$.trackingId").isEqualTo("P-201");
+        body.extractingPath("$.status").isEqualTo("IN_TRANSIT");
+        body.extractingPath("$.destination").isEqualTo("Leeds");
         assertThat(db.queryForObject("SELECT destination FROM parcel WHERE tracking_id = ?",
                 String.class, "P-201")).isEqualTo("Leeds");
     }
 
     @Test
     void replayingTheSameCreationLeavesExactlyOneParcel() throws Exception {
-        create("P-202", "York").andExpect(status().isCreated());
-        int replay = create("P-202", "York").andReturn().getResponse().getStatus();
+        assertThat(create("P-202", "York")).hasStatus(201);
+        int replay = create("P-202", "York").getResponse().getStatus();
         assertThat(replay).as("Choose an idempotent success (200/204) or an explicit conflict (409)")
                 .isIn(200, 204, 409);
         assertThat(db.queryForObject("SELECT count(*) FROM parcel WHERE tracking_id = ?",
@@ -95,11 +93,11 @@ class Week01ParcelIT extends ParcelTestKeys {
 
     @Test
     void conflictingDestinationLeavesTheFirstParcelIntact() throws Exception {
-        create("P-CONFLICT", "York").andExpect(status().isCreated());
-        create("P-CONFLICT", "Leeds").andExpect(status().isConflict());
-        http.perform(get("/parcels/P-CONFLICT")).andExpect(status().isOk())
-                .andExpect(jsonPath("$.destination").value("York"))
-                .andExpect(jsonPath("$.status").value("IN_TRANSIT"));
+        assertThat(create("P-CONFLICT", "York")).hasStatus(201);
+        assertThat(create("P-CONFLICT", "Leeds")).hasStatus(409);
+        var body = assertThat(http.get().uri("/parcels/P-CONFLICT")).hasStatusOk().bodyJson();
+        body.extractingPath("$.destination").isEqualTo("York");
+        body.extractingPath("$.status").isEqualTo("IN_TRANSIT");
     }
 
     @ParameterizedTest(name = "{0} is {1}")
@@ -114,15 +112,16 @@ class Week01ParcelIT extends ParcelTestKeys {
             body.putNull(field);
         }
         int before = db.queryForObject("SELECT count(*) FROM parcel", Integer.class);
-        int code = postParcel(json.writeValueAsString(body)).andReturn().getResponse().getStatus();
-        assertAll(
-                () -> assertThat(code).isIn(400, 422),
-                () -> assertThat(db.queryForObject("SELECT count(*) FROM parcel", Integer.class)).isEqualTo(before));
+        int code = postParcel(json.writeValueAsString(body)).getResponse().getStatus();
+        assertSoftly(softly -> {
+            softly.assertThat(code).isIn(400, 422);
+            softly.assertThat(db.queryForObject("SELECT count(*) FROM parcel", Integer.class)).isEqualTo(before);
+        });
     }
 
     @Test
     void blankDestinationIsRejectedBeforeInsertingTheRow() throws Exception {
-        int code = create("P-203", "  ").andReturn().getResponse().getStatus();
+        int code = create("P-203", "  ").getResponse().getStatus();
         assertThat(code).as("Invalid destination should produce a client validation error").isIn(400, 422);
         assertThat(db.queryForObject("SELECT count(*) FROM parcel WHERE tracking_id = ?",
                 Integer.class, "P-203")).isZero();
@@ -130,17 +129,16 @@ class Week01ParcelIT extends ParcelTestKeys {
 
     @Test
     void theOriginalClientCanStillReadAllThreeFields() throws Exception {
-        http.perform(get("/parcels/P-100")).andExpect(status().isOk())
-                .andExpect(jsonPath("$.trackingId").value("P-100"))
-                .andExpect(jsonPath("$.status").value("IN_TRANSIT"))
-                .andExpect(jsonPath("$.destination").value("York"));
+        var body = assertThat(http.get().uri("/parcels/P-100")).hasStatusOk().bodyJson();
+        body.extractingPath("$.trackingId").isEqualTo("P-100");
+        body.extractingPath("$.status").isEqualTo("IN_TRANSIT");
+        body.extractingPath("$.destination").isEqualTo("York");
     }
 
     @ParameterizedTest
     @CsvSource({"1.0, 200", "2.0, 400"})
     void lookupRespectsRequestedApiVersion(String version, int expectedStatus) throws Exception {
-        http.perform(get("/parcels/P-100").header("API-Version", version))
-                .andExpect(status().is(expectedStatus));
+        assertThat(http.get().uri("/parcels/P-100").header("API-Version", version)).hasStatus(expectedStatus);
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -148,15 +146,15 @@ class Week01ParcelIT extends ParcelTestKeys {
 
     @Test
     void originalClientCanReadAResponseWithAnAdditionalField() throws Exception {
-        create("P-VERSION", "Leeds").andExpect(status().isCreated());
+        assertThat(create("P-VERSION", "Leeds")).hasStatus(201);
         var examples = List.of(new OriginalParcel("P-100", "IN_TRANSIT", "York"),
                 new OriginalParcel("P-VERSION", "IN_TRANSIT", "Leeds"));
         var originalFields = Set.of("trackingId", "status", "destination");
         boolean sawAdditionalField = false;
         for (var expected : examples) {
-            var body = http.perform(get("/parcels/{id}", expected.trackingId())).andExpect(status().isOk())
-                    .andReturn().getResponse().getContentAsByteArray();
-            var response = json.readTree(body);
+            var lookup = http.get().uri("/parcels/{id}", expected.trackingId()).exchange();
+            assertThat(lookup).hasStatusOk();
+            var response = json.readTree(lookup.getResponse().getContentAsByteArray());
             assertThat(json.treeToValue(response, OriginalParcel.class)).isEqualTo(expected);
             if (!originalFields.containsAll(response.propertyNames())) {
                 sawAdditionalField = true;
@@ -235,10 +233,11 @@ class Week01ParcelIT extends ParcelTestKeys {
             var statuses = replies.stream().map(CompletableFuture::join).map(HttpResponse::statusCode).toList();
             int replay = http.send(request, ofString()).statusCode();
             assertThat(replay).as("the API's sequential duplicate policy").isIn(200, 204, 409);
-            assertAll(
-                    () -> assertThat(statuses).as("one creator and seven replays").containsOnly(201, replay),
-                    () -> assertThat(statuses).filteredOn(code -> code == 201).hasSize(1),
-                    () -> assertThat(rows("P-CONCURRENT")).isOne());
+            assertSoftly(softly -> {
+                softly.assertThat(statuses).as("one creator and seven replays").containsOnly(201, replay);
+                softly.assertThat(statuses).filteredOn(code -> code == 201).hasSize(1);
+                softly.assertThat(rows("P-CONCURRENT")).isOne();
+            });
         }
 
         private static void waitForOverlappingWriters(Statement statement) {
@@ -268,9 +267,10 @@ class Week01ParcelIT extends ParcelTestKeys {
                 assertThat(fetched.statusCode()).as("GET %s for ID '%s'", location, id).isEqualTo(200);
                 assertThat(json.readTree(fetched.body()).required("trackingId").asString()).isEqualTo(id);
             } else {
-                assertAll(
-                        () -> assertThat(created.statusCode()).as("validation response for '%s'", id).isIn(400, 422),
-                        () -> assertThat(rows(id)).as("rows saved for a rejected ID").isZero());
+                assertSoftly(softly -> {
+                    softly.assertThat(created.statusCode()).as("validation response for '%s'", id).isIn(400, 422);
+                    softly.assertThat(rows(id)).as("rows saved for a rejected ID").isZero();
+                });
             }
         }
 
@@ -300,9 +300,10 @@ class Week01ParcelIT extends ParcelTestKeys {
         @MethodSource("oversizedParcels")
         void oversizedFieldIsRejectedWithoutSaving(String field, String id, String status, String destination) throws Exception {
             var response = http.send(create(id, status, destination), ofString());
-            assertAll(
-                    () -> assertThat(response.statusCode()).as("validation response for oversized %s", field).isIn(400, 422),
-                    () -> assertThat(rows(id)).as("rows saved for invalid input").isZero());
+            assertSoftly(softly -> {
+                softly.assertThat(response.statusCode()).as("validation response for oversized %s", field).isIn(400, 422);
+                softly.assertThat(rows(id)).as("rows saved for invalid input").isZero();
+            });
         }
     }
 }

@@ -6,15 +6,15 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @Disabled("Enable when starting Week 6")
 @DisabledIfEnvironmentVariable(named = "GITHUB_ACTIONS", matches = "true", disabledReason = "Uses the learner's local kind cluster")
 class Week06ReleaseIT extends LocalRelease {
     @Test void regionChangeReachesTheRunningService() throws IOException {
         var region = history().lastEntry().getValue().value("region").asString();
-        assertNotEquals("north-yard", region, "Change the Helm region and wait for the rollout.");
-        assertEquals(region, track().required("region").asString(), "The Service should serve the new region.");
+        assertThat(region).as("Change the Helm region and wait for the rollout.").isNotEqualTo("north-yard");
+        assertThat(track().required("region").asString()).as("Region served after rollout").isEqualTo(region);
     }
 
     @Test void serviceRoutesAroundOneLiveButUnreadyReplica() {
@@ -23,10 +23,10 @@ class Week06ReleaseIT extends LocalRelease {
                 .filter(pod -> pod.getStatus().getConditions().stream()
                         .anyMatch(c -> "Ready".equals(c.getType()) && "False".equals(c.getStatus())))
                 .toList();
-        assertEquals(1, paused.size(), "Pause readiness on one running pod and wait for Ready=False.");
+        assertThat(paused).as("Pause readiness on one running pod and wait for Ready=False.").hasSize(1);
         String name = paused.getFirst().getMetadata().getName();
         var liveness = get(CORE_API + "/pods/" + name + ":8080/proxy/actuator/health/liveness");
-        assertEquals("UP", liveness.required("status").asString());
+        assertThat(liveness.required("status").asString()).isEqualTo("UP");
 
         var ready = new HashMap<String, Boolean>();
         var slices = cluster.discovery().v1().endpointSlices().inNamespace(NAMESPACE)
@@ -36,9 +36,9 @@ class Week06ReleaseIT extends LocalRelease {
                 ready.put(endpoint.getTargetRef().getName(), endpoint.getConditions().getReady());
             }
         }
-        assertEquals(Boolean.FALSE, ready.get(name), "Wait for the paused pod's endpoint to become unready.");
+        assertThat(ready).as("Wait for the paused pod's endpoint to become unready.").containsEntry(name, false);
         var counts = sampleReplicas();
-        assertTrue(counts.keySet().stream().allMatch(replica -> Boolean.TRUE.equals(ready.get(replica))),
-                () -> "All 30 requests should reach ready endpoints. Observed " + counts);
+        assertThat(counts.keySet()).as("Replicas serving the 30 requests: %s", counts)
+                .allSatisfy(replica -> assertThat(ready).containsEntry(replica, true));
     }
 }

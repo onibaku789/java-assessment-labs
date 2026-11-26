@@ -11,15 +11,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.ResultActions;
-import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
-import static org.hamcrest.Matchers.containsStringIgnoringCase;
-import static org.junit.jupiter.api.Assertions.assertAll;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 @SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:week02",
         "spring.datasource.username=sa", "spring.datasource.password="})
@@ -27,14 +23,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class Week02SecurityIT extends ParcelTestKeys {
     static final String ORIGIN = "http://127.0.0.1:18082";
     @Autowired
-    MockMvc http;
+    MockMvcTester http;
 
-    private ResultActions lookup(Map<String, Object> claims) throws Exception {
-        return http.perform(get("/parcels/P-100").header("Authorization", bearer(TRUSTED, claims)));
+    private MvcTestResult lookup(Map<String, Object> claims) throws Exception {
+        return http.get().uri("/parcels/P-100").header("Authorization", bearer(TRUSTED, claims)).exchange();
     }
 
-    private MockHttpServletRequestBuilder parcelRequest(String trackingId, String credential) throws Exception {
-        var request = get("/parcels/{id}", trackingId);
+    private MockMvcTester.MockMvcRequestBuilder parcelRequest(String trackingId, String credential) throws Exception {
+        var request = http.get().uri("/parcels/{id}", trackingId);
         if (!"no token".equals(credential)) {
             var claims = readerClaims();
             claims.put("scope", credential);
@@ -45,51 +41,50 @@ class Week02SecurityIT extends ParcelTestKeys {
 
     @Test
     void readerCanReadTheSeededParcel() throws Exception {
-        lookup(readerClaims()).andExpect(status().isOk())
-                .andExpect(jsonPath("$.trackingId").value("P-100"));
+        assertThat(lookup(readerClaims())).hasStatusOk()
+                .bodyJson().extractingPath("$.trackingId").isEqualTo("P-100");
     }
 
     @Test
-    void aMissingTokenReturns401() throws Exception {
-        http.perform(get("/parcels/P-100")).andExpect(status().isUnauthorized());
+    void aMissingTokenReturns401() {
+        assertThat(http.get().uri("/parcels/P-100")).hasStatus(401);
     }
 
     @Test
     void aValidObserverHasInsufficientScopeAndGets403() throws Exception {
-        http.perform(parcelRequest("P-100", "parcel.observe")).andExpect(status().isForbidden());
+        assertThat(parcelRequest("P-100", "parcel.observe")).hasStatus(403);
     }
 
     @Test
     void rejectExpiredToken() throws Exception {
         var claims = readerClaims();
         claims.put("exp", Instant.now().minusSeconds(300).getEpochSecond());
-        lookup(claims).andExpect(status().isUnauthorized());
+        assertThat(lookup(claims)).hasStatus(401);
     }
 
     @Test
     void rejectWrongIssuer() throws Exception {
         var claims = readerClaims();
         claims.put("iss", "urn:other");
-        lookup(claims).andExpect(status().isUnauthorized());
+        assertThat(lookup(claims)).hasStatus(401);
     }
 
     @Test
     void rejectWrongAudience() throws Exception {
         var claims = readerClaims();
         claims.put("aud", "other-api");
-        lookup(claims).andExpect(status().isUnauthorized());
+        assertThat(lookup(claims)).hasStatus(401);
     }
 
     @Test
     void rejectTokenSignedByAnUntrustedKey() throws Exception {
-        http.perform(get("/parcels/P-100").header("Authorization", bearer(newKey(), readerClaims())))
-                .andExpect(status().isUnauthorized());
+        var token = bearer(newKey(), readerClaims());
+        assertThat(http.get().uri("/parcels/P-100").header("Authorization", token)).hasStatus(401);
     }
 
     @Test
-    void malformedBearerTokenReturns401() throws Exception {
-        http.perform(get("/parcels/P-100").header("Authorization", "Bearer malformed"))
-                .andExpect(status().isUnauthorized());
+    void malformedBearerTokenReturns401() {
+        assertThat(http.get().uri("/parcels/P-100").header("Authorization", "Bearer malformed")).hasStatus(401);
     }
 
     @ParameterizedTest(name = "signed reader token missing {0} returns 401")
@@ -97,74 +92,77 @@ class Week02SecurityIT extends ParcelTestKeys {
     void rejectMissingRequiredClaim(String claim) throws Exception {
         var claims = readerClaims();
         claims.remove(claim);
-        var response = lookup(claims).andReturn().getResponse();
-        assertEquals(401, response.getStatus(), "Signed token missing " + claim);
+        assertThat(lookup(claims)).as("Signed token missing %s", claim).hasStatus(401);
     }
 
     @Test
     void readerCanReadWhenParcelApiIsAmongSeveralAudiences() throws Exception {
         var claims = readerClaims();
         claims.put("aud", List.of("billing-api", AUDIENCE));
-        lookup(claims).andExpect(status().isOk()).andExpect(jsonPath("$.trackingId").value("P-100"));
+        assertThat(lookup(claims)).hasStatusOk()
+                .bodyJson().extractingPath("$.trackingId").isEqualTo("P-100");
     }
 
     @Test
     void rejectAudienceListThatOmitsParcelApi() throws Exception {
         var claims = readerClaims();
         claims.put("aud", List.of("billing-api", "shipping-api"));
-        lookup(claims).andExpect(status().isUnauthorized());
+        assertThat(lookup(claims)).hasStatus(401);
     }
 
     @Test
     void tokenWithObserveAndReadScopesCanRead() throws Exception {
-        http.perform(parcelRequest("P-100", "parcel.observe parcel.read"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.trackingId").value("P-100"));
+        assertThat(parcelRequest("P-100", "parcel.observe parcel.read")).hasStatusOk()
+                .bodyJson().extractingPath("$.trackingId").isEqualTo("P-100");
     }
 
     @Test
     void authenticatedCallerWithoutAScopeGets403() throws Exception {
         var claims = readerClaims();
         claims.remove("scope");
-        lookup(claims).andExpect(status().isForbidden());
+        assertThat(lookup(claims)).hasStatus(403);
     }
 
     @Test
     void similarlyNamedScopeDoesNotGrantReadPermission() throws Exception {
-        http.perform(parcelRequest("P-100", "parcel.readonly")).andExpect(status().isForbidden());
+        assertThat(parcelRequest("P-100", "parcel.readonly")).hasStatus(403);
     }
 
     @ParameterizedTest(name = "unknown parcel with {0} returns {1}")
     @CsvSource({"no token, 401", "parcel.observe, 403", "parcel.read, 404"})
     void unknownParcelIsDisclosedOnlyToAReader(String credential, int expectedStatus) throws Exception {
-        var response = http.perform(parcelRequest("P-MISSING", credential)).andReturn().getResponse();
-        assertEquals(expectedStatus, response.getStatus(), "Unknown parcel with " + credential);
+        assertThat(parcelRequest("P-MISSING", credential))
+                .as("Unknown parcel with %s", credential).hasStatus(expectedStatus);
     }
 
-    private ResultActions preflight(String origin) throws Exception {
-        return http.perform(options("/parcels/P-100").header("Origin", origin)
+    private MvcTestResult preflight(String origin) {
+        return http.options().uri("/parcels/P-100").header("Origin", origin)
                 .header("Access-Control-Request-Method", "GET")
-                .header("Access-Control-Request-Headers", "Authorization"));
+                .header("Access-Control-Request-Headers", "Authorization").exchange();
     }
 
     @Test
-    void allowTheBrowserOriginToSendTheAuthorizationHeader() throws Exception {
-        preflight(ORIGIN).andExpect(status().is2xxSuccessful())
-                .andExpect(header().string("Access-Control-Allow-Origin", ORIGIN))
-                .andExpect(header().string("Access-Control-Allow-Methods", containsStringIgnoringCase("GET")))
-                .andExpect(header().string("Access-Control-Allow-Headers", containsStringIgnoringCase("authorization")));
+    void allowTheBrowserOriginToSendTheAuthorizationHeader() {
+        var result = preflight(ORIGIN);
+        assertThat(result).hasStatus2xxSuccessful().hasHeader("Access-Control-Allow-Origin", ORIGIN);
+        var response = result.getResponse();
+        assertThat(response.getHeader("Access-Control-Allow-Methods")).containsIgnoringCase("GET");
+        assertThat(response.getHeader("Access-Control-Allow-Headers")).containsIgnoringCase("authorization");
     }
 
     @Test
-    void anUnlistedOriginGetsNoCorsGrant() throws Exception {
-        preflight("http://127.0.0.1:18099").andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+    void anUnlistedOriginGetsNoCorsGrant() {
+        assertThat(preflight("http://127.0.0.1:18099")).doesNotContainHeader("Access-Control-Allow-Origin");
     }
 
     @ParameterizedTest(name = "allowed origin can read the {1} response with {0}")
     @CsvSource({"parcel.read, 200", "no token, 401", "parcel.observe, 403"})
     void allowedBrowserOriginCanReadActualLookupResponse(String credential, int expectedStatus) throws Exception {
-        var response = http.perform(parcelRequest("P-100", credential).header("Origin", ORIGIN)).andReturn().getResponse();
-        assertAll("Browser lookup with " + credential,
-                () -> assertEquals(expectedStatus, response.getStatus(), "HTTP status"),
-                () -> assertEquals(ORIGIN, response.getHeader("Access-Control-Allow-Origin"), "Access-Control-Allow-Origin"));
+        var response = parcelRequest("P-100", credential).header("Origin", ORIGIN).exchange().getResponse();
+        assertSoftly(softly -> {
+            softly.assertThat(response.getStatus()).as("HTTP status for %s", credential).isEqualTo(expectedStatus);
+            softly.assertThat(response.getHeader("Access-Control-Allow-Origin"))
+                    .as("Access-Control-Allow-Origin for %s", credential).isEqualTo(ORIGIN);
+        });
     }
 }

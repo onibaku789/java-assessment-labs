@@ -12,7 +12,7 @@ sdk env
 ./mvnw --version
 ```
 
-The Maven Wrapper downloads Maven 3.10.2 on first use. Surefire runs the six JUnit Jupiter smoke tests. Failsafe discovers the integration suites for all eight weeks during `verify`. Start Docker before running the full build.
+The Maven Wrapper downloads Maven 3.10.2 on first use. Use JUnit Jupiter to run tests and AssertJ for all Java test assertions. Surefire runs the six smoke tests. Failsafe discovers the integration suites for all eight weeks during `verify`. Start Docker before running the full build.
 
 ```bash
 ./mvnw test       # Smoke tests across all three projects
@@ -105,6 +105,21 @@ Start in the [parcel controller](parcel-api/src/main/java/study/parcel/ParcelCon
 - [ ] **Week 1 — Create and version a resource.** Implement `POST /parcels` with a caller-supplied tracking ID. Validate the input, enforce uniqueness in PostgreSQL, and decide how the API handles duplicates. Add an optional response field and run the original client test again. **Done when** a test creates a parcel, follows its `201 Created` response’s `Location` header, and reads the same parcel. Cover invalid input and a repeated ID. Explain the API’s Richardson maturity level and one change that would need a version migration.
 - [ ] **Week 2 — Secure a lookup.** Add Spring Security JWT validation for signature, issuer, audience, expiry and read scope. Use the [token fixture](parcel-api/fixtures/token.py) to generate reader and observer tokens. From `parcel-api`, serve the [browser client](parcel-api/browser/index.html) with `python3 -m http.server 18082 --bind 127.0.0.1 --directory browser`. Allow that origin and inspect the preflight in DevTools. **Done when** tests show 200 for a reader, 401 for a missing or invalid token, and 403 for an authenticated observer. Save a redacted browser trace that explains a denied origin and map two controls to OWASP risks.
 - [ ] **Week 3 — Integrate a carrier.** From `parcel-api`, run `python3 fixtures/carrier.py`. Use the [WSDL](parcel-api/fixtures/carrier.wsdl) to write a Java client with a timeout. Also run `./grpc-demo.sh`. **Done when** the Java client tests distinguish a successful lookup, the declared unknown-parcel SOAP fault, and an unavailable carrier. Give one concrete reason to choose SOAP, REST, GraphQL, gRPC or messaging for different clients.
+
+### Week 3 checkpoints
+
+1. Start with `readTheStatusFromTheSoapEnvelope`. Read the [sample request](parcel-api/fixtures/track.xml) and the [WSDL binding](parcel-api/fixtures/carrier.wsdl). In `CarrierClient.track`, post a SOAP 1.1 envelope to the supplied endpoint. Use the tracking ID argument as XML text and read the status from the carrier's `TrackResponse`.
+2. Map the declared `UnknownParcel` detail to `Optional.empty()`. The fixture returns HTTP 500 for both the declared fault and other SOAP faults. Inspect the detail element and its namespace. Report other faults, unavailable responses, and unreadable replies as `IOException`.
+3. Set a request timeout that makes a stalled lookup return within five seconds. Then run the whole week. The JUnit suite starts its own carrier on a random loopback port.
+
+From the repository root:
+
+```bash
+./mvnw -pl parcel-api '-Dit.test=Week03CarrierIT#readTheStatusFromTheSoapEnvelope' verify
+./mvnw -pl parcel-api -Dit.test=Week03CarrierIT verify
+```
+
+For the protocol comparison, run `./parcel-api/grpc-demo.sh` and record one client scenario and a reason to choose each of SOAP, REST, GraphQL, gRPC, and messaging.
 
 ## Weeks 4–5 · Shipment Event Processor
 
