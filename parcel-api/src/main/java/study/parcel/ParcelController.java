@@ -16,7 +16,7 @@ import java.time.Instant;
 import java.util.List;
 
 @RestController
-@RequestMapping("/parcels")
+@RequestMapping(value = "/parcels", version = "1.0")
 class ParcelController {
     record Parcel(@NotBlank @Size(max = 32) @Pattern(regexp = "[^/]+", message = "trackingId cannot contain /") String trackingId,
                   @Size(max = 32) @NotBlank String status,

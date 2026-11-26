@@ -135,6 +135,13 @@ class Week01ParcelIT extends ParcelTestKeys {
                 .andExpect(jsonPath("$.destination").value("York"));
     }
 
+    @ParameterizedTest
+    @CsvSource({"1.0, 200", "2.0, 400"})
+    void lookupRespectsRequestedApiVersion(String version, int expectedStatus) throws Exception {
+        http.perform(get("/parcels/P-100").header("API-Version", version))
+                .andExpect(status().is(expectedStatus));
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record OriginalParcel(String trackingId, String status, String destination) {}
 
