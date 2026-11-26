@@ -68,7 +68,7 @@ To repeat that method, add its name to the Failsafe filter.
 | --- | --- |
 | 1 · [Parcel creation](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) | Persist a parcel, follow its location, preserve the original read behavior, handle concurrent duplicates, and reject invalid or oversized input. |
 | 2 · [API security](parcel-api/src/test/java/study/parcel/Week02SecurityIT.java) | Accept a reader, deny an observer, validate signatures and claims, and allow browser preflight. |
-| 3 · [SOAP carrier](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java) | Implement the [carrier adapter](parcel-api/src/main/java/study/parcel/CarrierClient.java). Return the status on success, an empty result for an unknown parcel, and an I/O error within five seconds for a stalled request. JUnit starts a loopback Java HTTP fixture. |
+| 3 · [SOAP carrier](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java) | Refactor the [carrier adapter](parcel-api/src/main/java/study/parcel/CarrierClient.java) to call a WSDL-generated Apache CXF client. Map the declared fault, preserve unexpected errors, and bound the wait for a stalled carrier. |
 | 4 · [Shipment delivery](shipment-worker/src/test/java/study/parcel/Week04DeliveryIT.java) | Write one receipt per event under concurrent delivery or replay and recover from a failed write. |
 | 5 · [Backup and restore](shipment-worker/src/test/java/study/parcel/Week05RestoreIT.java) | Restore two dataset sizes three times each, verify SHA-256 digests, record timings and preserve an existing receipt. |
 | 6 · [Kubernetes readiness](release-lab/src/test/java/study/parcel/Week06ReleaseIT.java) | Change the region, pause readiness on one live replica, and verify traffic reaches only ready endpoints. Run locally while the replica is paused. |
@@ -104,22 +104,25 @@ Start in the [parcel controller](parcel-api/src/main/java/study/parcel/ParcelCon
 
 - [ ] **Week 1 — Create and version a resource.** Implement `POST /parcels` with a caller-supplied tracking ID. Validate the input, enforce uniqueness in PostgreSQL, and decide how the API handles duplicates. Add an optional response field and run the original client test again. **Done when** a test creates a parcel, follows its `201 Created` response’s `Location` header, and reads the same parcel. Cover invalid input and a repeated ID. Explain the API’s Richardson maturity level and one change that would need a version migration.
 - [ ] **Week 2 — Secure a lookup.** Add Spring Security JWT validation for signature, issuer, audience, expiry and read scope. Use the [token fixture](parcel-api/fixtures/token.py) to generate reader and observer tokens. From `parcel-api`, serve the [browser client](parcel-api/browser/index.html) with `python3 -m http.server 18082 --bind 127.0.0.1 --directory browser`. Allow that origin and inspect the preflight in DevTools. **Done when** tests show 200 for a reader, 401 for a missing or invalid token, and 403 for an authenticated observer. Save a redacted browser trace that explains a denied origin and map two controls to OWASP risks.
-- [ ] **Week 3 — Integrate a carrier.** From `parcel-api`, run `python3 fixtures/carrier.py`. Use the [WSDL](parcel-api/fixtures/carrier.wsdl) to write a Java client with a timeout. Also run `./grpc-demo.sh`. **Done when** the Java client tests distinguish a successful lookup, the declared unknown-parcel SOAP fault, and an unavailable carrier. Give one concrete reason to choose SOAP, REST, GraphQL, gRPC or messaging for different clients.
+- [ ] **Week 3 — Integrate a SOAP carrier with Apache CXF.** Replace the handwritten HTTP and XML in `CarrierClient` with a call to the generated carrier port. Keep the existing `track(URI, String)` API. **Done when** the adapter delegates SOAP handling to CXF and the Week 3 suite passes against a local carrier.
 
 ### Week 3 checkpoints
 
-1. Start with `readTheStatusFromTheSoapEnvelope`. Read the [sample request](parcel-api/fixtures/track.xml) and the [WSDL binding](parcel-api/fixtures/carrier.wsdl). In `CarrierClient.track`, post a SOAP 1.1 envelope to the supplied endpoint. Use the tracking ID argument as XML text and read the status from the carrier's `TrackResponse`.
-2. Map the declared `UnknownParcel` detail to `Optional.empty()`. The fixture returns HTTP 500 for both the declared fault and other SOAP faults. Inspect the detail element and its namespace. Report other faults, unavailable responses, and unreadable replies as `IOException`.
-3. Set a request timeout that makes a stalled lookup return within five seconds. Then run the whole week. The JUnit suite starts its own carrier on a random loopback port.
+1. **Generate the Java contract.** From the repository root, run `./mvnw -pl parcel-api generate-sources`. Open `parcel-api/target/generated-sources/cxf/study/parcel/carrier/Carrier.java` and find `String track(String body) throws Missing`. Compare it with the WSDL's `Track` operation and `UnknownParcel` fault. Maven regenerates these files on a clean build. [Carrier WSDL](parcel-api/fixtures/carrier.wsdl) · [CXF Maven code generation](https://cxf.apache.org/docs/maven-cxf-codegen-plugin-wsdl-to-java.html)
+2. **Call the generated port.** Start with `generatedPortReadsTheStatusAndRaisesTheDeclaredFault` in the [Week 3 suite](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java). It shows how to get the port from `Carrier_Service`, point it at the supplied endpoint through `BindingProvider`, and call `track`. Use the same approach in the adapter. The generated service loads the packaged WSDL. JUnit starts the carrier on a random loopback port.
+3. **Translate the result.** Return the status on success. Catch the generated `Missing` exception for an unknown parcel and return `Optional.empty()`. Surface unexpected SOAP faults and transport failures as `IOException`, retaining the original exception as the cause. A malformed reply or missing `TrackResponse` must also raise `IOException`. Start with `preserveTheUndeclaredSoapFaultAsTheCauseOfAnIoError` to see what the handwritten adapter loses.
+4. **Bound the wait.** Configure connection and receive timeouts on the CXF HTTP conduit, and release client resources when finished. The stall test opens a socket that never answers. The adapter must report an I/O error within five seconds. [CXF HTTP transport](https://cxf.apache.org/docs/client-http-transport-including-ssl-support.html)
 
-From the repository root:
+**Hint for the wrong-namespace test.** CXF can match a fault by its local name when its full XML name fails to match. An `UnknownParcel` from `urn:other` must still surface as an error. One approach is an inbound fault interceptor that runs after `Soap11FaultInInterceptor` and before `ClientFaultConverter`. Inspect the parsed detail and set `ClientFaultConverter.DISABLE_FAULT_MAPPING` on that message if the namespace is unexpected. [CXF fault conversion](https://github.com/apache/cxf/blob/cxf-4.2.4/core/src/main/java/org/apache/cxf/interceptor/ClientFaultConverter.java#L94-L138)
+
+Run the contract example, then the full Week 3 suite from the repository root. Both commands use the JUnit carrier fixture.
 
 ```bash
-./mvnw -pl parcel-api '-Dit.test=Week03CarrierIT#readTheStatusFromTheSoapEnvelope' verify
+./mvnw -pl parcel-api '-Dit.test=Week03CarrierIT#generatedPortReadsTheStatusAndRaisesTheDeclaredFault' verify
 ./mvnw -pl parcel-api -Dit.test=Week03CarrierIT verify
 ```
 
-For the protocol comparison, run `./parcel-api/grpc-demo.sh` and record one client scenario and a reason to choose each of SOAP, REST, GraphQL, gRPC, and messaging.
+For the protocol comparison, run `./parcel-api/grpc-demo.sh` and record one client scenario and a reason to choose each of SOAP, REST, GraphQL, gRPC, and messaging. For a manual SOAP lookup, `python3 parcel-api/fixtures/carrier.py` serves the carrier on port 18083.
 
 ## Weeks 4–5 · Shipment Event Processor
 

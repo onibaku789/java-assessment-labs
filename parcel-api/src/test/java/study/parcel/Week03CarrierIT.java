@@ -2,25 +2,30 @@ package study.parcel;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import jakarta.xml.ws.BindingProvider;
+import jakarta.xml.ws.WebServiceException;
 
 import java.io.IOException;
 import java.net.*;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import org.apache.cxf.frontend.ClientProxy;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.springframework.core.io.ClassPathResource;
 import org.w3c.dom.Node;
 import org.xml.sax.SAXException;
+import study.parcel.carrier.Carrier_Service;
+import study.parcel.carrier.Missing;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIOException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class Week03CarrierIT {
     private static final String SOAP = "http://schemas.xmlsoap.org/soap/envelope/";
@@ -30,13 +35,43 @@ class Week03CarrierIT {
     private final CarrierClient client = new CarrierClient();
 
     @Test
-    void readTheStatusFromTheSoapEnvelope() throws Exception {
+    void generatedPortReadsTheStatusAndRaisesTheDeclaredFault() throws Exception {
+        var port = new Carrier_Service().getCarrierPort();
+        try {
+            ((BindingProvider) port).getRequestContext()
+                    .put(BindingProvider.ENDPOINT_ADDRESS_PROPERTY, endpoint.toString());
+
+            assertThat(port.track("P-100")).isEqualTo("IN_TRANSIT");
+            assertThatThrownBy(() -> port.track("P-404"))
+                    .isInstanceOfSatisfying(Missing.class,
+                            fault -> assertThat(fault.getFaultInfo()).isEqualTo("missing"));
+        } finally {
+            ClientProxy.getClient(port).destroy();
+        }
+    }
+
+    @Test
+    void adapterReturnsTheStatusFromTheSuppliedEndpoint() throws Exception {
         assertThat(client.track(endpoint, "P-100")).contains("IN_TRANSIT");
     }
 
     @Test
     void mapTheDeclaredUnknownParcelFaultToAnEmptyResult() throws Exception {
         assertThat(client.track(endpoint, "P-404")).isEmpty();
+    }
+
+    @Test
+    void preserveTheUndeclaredSoapFaultAsTheCauseOfAnIoError() {
+        assertThatThrownBy(() -> client.track(endpoint, "P-OTHER-FAULT"))
+                .isInstanceOf(IOException.class)
+                .cause().isInstanceOf(WebServiceException.class)
+                .hasMessageContaining("Carrier offline");
+    }
+
+    @Test
+    void reportMissingCarrierEndpointAsAnIoError() {
+        assertThatIOException().isThrownBy(() -> client.track(endpoint.resolve("/missing-carrier"), "P-100"))
+                .withCauseInstanceOf(WebServiceException.class);
     }
 
     @Test
@@ -56,7 +91,6 @@ class Week03CarrierIT {
 
     @ParameterizedTest(name = "{0} produces an I/O error")
     @CsvSource({
-            "undeclared SOAP fault, P-OTHER-FAULT",
             "UnknownParcel in another namespace, P-WRONG-FAULT",
             "HTTP 503 without a SOAP body, P-UNAVAILABLE",
             "malformed XML, P-MALFORMED",
@@ -83,14 +117,10 @@ class Week03CarrierIT {
         var builder = parser.newDocumentBuilder();
         carrier = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         endpoint = URI.create("http://127.0.0.1:" + carrier.getAddress().getPort() + "/carrier");
-        var wsdl = new ClassPathResource("carrier.wsdl").getContentAsString(UTF_8)
-                .replace("http://127.0.0.1:18083/carrier", endpoint.toString());
         carrier.createContext("/carrier", exchange -> {
             try (exchange) {
                 if (!"/carrier".equals(exchange.getRequestURI().getPath())) {
                     exchange.sendResponseHeaders(404, -1);
-                } else if ("GET".equals(exchange.getRequestMethod()) && "wsdl".equals(exchange.getRequestURI().getQuery())) {
-                    reply(exchange, 200, wsdl);
                 } else if ("POST".equals(exchange.getRequestMethod())) {
                     handleTracking(exchange, builder);
                 } else {
