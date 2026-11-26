@@ -3,6 +3,7 @@ package study.parcel;
 import java.security.*;
 import java.time.Instant;
 import java.util.*;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,7 +20,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:week02",
         "spring.datasource.username=sa", "spring.datasource.password="})
 @AutoConfigureMockMvc
-class Week02SecurityContract extends ParcelTestKeys {
+@Disabled("Enable when starting Week 2")
+class Week02SecurityIT extends ParcelTestKeys {
     static final String ISSUER = "urn:parcel:study";
     static final String AUDIENCE = "parcel-api";
     static final String ORIGIN = "http://127.0.0.1:18082";

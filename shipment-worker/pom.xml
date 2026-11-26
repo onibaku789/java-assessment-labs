@@ -12,6 +12,8 @@
   <properties>
     <java.version>25</java.version>
     <argLine/>
+    <!-- Load Mockito at startup and turn off CDS for both JUnit forks. -->
+    <testJvmArgs>@{argLine} "-javaagent:${org.mockito:mockito-core:jar}" -Xshare:off</testJvmArgs>
   </properties>
   <dependencyManagement><dependencies><dependency>
     <groupId>software.amazon.awssdk</groupId><artifactId>bom</artifactId>
@@ -61,8 +63,14 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
-          <!-- Mockito extends the bootstrap classpath, so disable CDS in test JVMs. -->
-          <argLine>@{argLine} "-javaagent:${org.mockito:mockito-core:jar}" -Xshare:off</argLine>
+          <argLine>${testJvmArgs}</argLine>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <argLine>${testJvmArgs}</argLine>
         </configuration>
       </plugin>
     </plugins>

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve a pinned JDK and Maven without changing the user's global toolchain.
 set -euo pipefail
-case "${1:-}" in java|javac|jcmd|jfr|mvn) tool=$1; shift;; *) echo "Use java, javac, jcmd, jfr or mvn" >&2; exit 2;; esac
+case "${1:-}" in java|javac|jcmd|jfr|mvn|github-env) tool=$1; shift;; *) echo "Use java, javac, jcmd, jfr, mvn or github-env" >&2; exit 2;; esac
 case "$(uname -s)" in Darwin) os=mac;; Linux) os=linux;; *) echo "Use macOS or Linux" >&2; exit 2;; esac
 case "$(uname -m)" in arm64|aarch64) arch=aarch64;; x86_64) arch=x64;; *) echo "Unsupported architecture" >&2; exit 2;; esac
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/parcel-study"
@@ -35,10 +35,15 @@ if [[ "$os" == mac ]]; then jdk_home="$jdk_home/Contents/Home"; probe=Contents/H
 install_archive "$jdk" "$probe" "$url" "$url.sha256.txt" 256
 export JAVA_HOME="$jdk_home" PATH="$jdk_home/bin:$PATH"
 
-if [[ "$tool" == mvn ]]; then
+if [[ "$tool" == mvn || "$tool" == github-env ]]; then
   maven=apache-maven-3.10.2
   url="https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.10.2/$maven-bin.tar.gz"
   install_archive "$maven" bin/mvn "$url" "$url.sha512" 512
+  if [[ "$tool" == github-env ]]; then
+    printf 'JAVA_HOME=%s\n' "$JAVA_HOME" >> "${GITHUB_ENV:?Run github-env inside GitHub Actions}"
+    printf '%s\n' "$JAVA_HOME/bin" "$cache/$maven/bin" >> "${GITHUB_PATH:?}"
+    exit 0
+  fi
   executable="$cache/$maven/bin/mvn"
 else
   executable="$jdk_home/bin/$tool"
