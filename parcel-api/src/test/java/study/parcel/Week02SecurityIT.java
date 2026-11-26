@@ -1,10 +1,6 @@
 package study.parcel;
 
-import java.security.KeyPair;
-import java.security.Signature;
 import java.time.Instant;
-import java.util.Base64;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,9 +14,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import tools.jackson.databind.ObjectMapper;
 
-import static java.nio.charset.StandardCharsets.US_ASCII;
 import static org.hamcrest.Matchers.containsStringIgnoringCase;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,28 +25,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.username=sa", "spring.datasource.password="})
 @AutoConfigureMockMvc
 class Week02SecurityIT extends ParcelTestKeys {
-    static final String ISSUER = "urn:parcel:study";
-    static final String AUDIENCE = "parcel-api";
     static final String ORIGIN = "http://127.0.0.1:18082";
-    static final ObjectMapper JSON = new ObjectMapper();
     @Autowired
     MockMvc http;
-
-    private static Map<String, Object> readerClaims() {
-        long now = Instant.now().getEpochSecond();
-        return new HashMap<>(Map.of("sub", "local-test", "iss", ISSUER, "aud", AUDIENCE,
-                "scope", "parcel.read", "iat", now - 600, "exp", now + 300));
-    }
-
-    private static String bearer(KeyPair key, Map<String, Object> claims) throws Exception {
-        var base64 = Base64.getUrlEncoder().withoutPadding();
-        String payload = base64.encodeToString(JSON.writeValueAsBytes(Map.of("alg", "RS256", "typ", "JWT")))
-                + "." + base64.encodeToString(JSON.writeValueAsBytes(claims));
-        var signer = Signature.getInstance("SHA256withRSA");
-        signer.initSign(key.getPrivate());
-        signer.update(payload.getBytes(US_ASCII));
-        return "Bearer " + payload + "." + base64.encodeToString(signer.sign());
-    }
 
     private ResultActions lookup(Map<String, Object> claims) throws Exception {
         return http.perform(get("/parcels/P-100").header("Authorization", bearer(TRUSTED, claims)));
