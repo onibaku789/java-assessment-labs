@@ -69,6 +69,7 @@ To repeat that method, add its name to the Failsafe filter.
 | 1 · [Parcel creation](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) | Persist a parcel, follow its location, preserve the original read behavior, handle concurrent duplicates, and reject invalid or oversized input. |
 | 2 · [API security](parcel-api/src/test/java/study/parcel/Week02SecurityIT.java) | Accept a reader, deny an observer, validate signatures and claims, and allow browser preflight. |
 | 3 · [SOAP carrier](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java) | Refactor the [carrier adapter](parcel-api/src/main/java/study/parcel/CarrierClient.java) to call a WSDL-generated Apache CXF client. Map the declared fault, preserve unexpected errors, and bound the wait for a stalled carrier. |
+| 3 · [gRPC carrier](parcel-api/src/test/java/study/parcel/Week03GrpcCarrierIT.java) | Call the generated Java stub, handle an unknown parcel, preserve a carrier outage, and set a deadline on each lookup. |
 | 4 · [Shipment delivery](shipment-worker/src/test/java/study/parcel/Week04DeliveryIT.java) | Write one receipt per event under concurrent delivery or replay and recover from a failed write. |
 | 5 · [Backup and restore](shipment-worker/src/test/java/study/parcel/Week05RestoreIT.java) | Restore two dataset sizes three times each, verify SHA-256 digests, record timings and preserve an existing receipt. |
 | 6 · [Kubernetes readiness](release-lab/src/test/java/study/parcel/Week06ReleaseIT.java) | Change the region, pause readiness on one live replica, and verify traffic reaches only ready endpoints. Run locally while the replica is paused. |
@@ -105,6 +106,7 @@ Start in the [parcel controller](parcel-api/src/main/java/study/parcel/ParcelCon
 - [x] **Week 1 — Create and version a resource.** Implement `POST /parcels` with a caller-supplied tracking ID. Validate the input, enforce uniqueness in PostgreSQL, and decide how the API handles duplicates. Add an optional response field and run the original client test again. **Done when** a test creates a parcel, follows its `201 Created` response’s `Location` header, and reads the same parcel. Cover invalid input and a repeated ID. Explain the API’s Richardson maturity level and one change that would need a version migration.
 - [x] **Week 2 — Secure a lookup.** Add Spring Security JWT validation for signature, issuer, audience, expiry and read scope. Use the [token fixture](parcel-api/fixtures/token.py) to generate reader and observer tokens. From `parcel-api`, serve the [browser client](parcel-api/browser/index.html) with `python3 -m http.server 18082 --bind 127.0.0.1 --directory browser`. Allow that origin and inspect the preflight in DevTools. **Done when** tests show 200 for a reader, 401 for a missing or invalid token, and 403 for an authenticated observer. Save a redacted browser trace that explains a denied origin and map two controls to OWASP risks.
 - [x] **Week 3 — Integrate a SOAP carrier with Apache CXF.** Replace the handwritten HTTP and XML in `CarrierClient` with a call to the generated carrier port. Keep the existing `track(URI, String)` API. **Done when** the adapter delegates SOAP handling to CXF and the Week 3 suite passes against a local carrier.
+- [x] **Week 3 — Track a parcel with a Java gRPC client.** Handle unknown parcels and set a fresh deadline in `GrpcCarrierClient.track`. **Done when** all four gRPC integration tests pass.
 
 The Week 1 API fits Richardson level 2. Clients use resource URLs, HTTP methods, and status codes. For example, `POST /parcels` returns `201 Created` with a `Location` for the next `GET`. Adding `createdAt` preserved the original client. Renaming `trackingId` would break clients that read it and would require a version migration. [Week 1 compatibility tests](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java)
 
@@ -125,6 +127,21 @@ Run the contract example, then the full Week 3 suite from the repository root. B
 ```
 
 For the protocol comparison, run `./parcel-api/grpc-demo.sh` and record one client scenario and a reason to choose each of SOAP, REST, GraphQL, gRPC, and messaging. For a manual SOAP lookup, `python3 parcel-api/fixtures/carrier.py` serves the carrier on port 18083.
+
+### Week 3 gRPC exercise
+
+Maven generates the Java messages and the `TrackingGrpc` client stub from the same contract used by the Python demo. JUnit starts a local gRPC server on a random loopback port and supplies the channel. [Carrier contract](parcel-api/fixtures/grpc/carrier.proto) · [Java client](parcel-api/src/main/java/study/parcel/GrpcCarrierClient.java)
+
+1. Run the passing lookup below. Follow `P-100` from `Request.id` through the generated stub to `Reply.status`. The test also checks a second ID with a different status.
+2. Run the full gRPC suite. The unknown-parcel test shows how `NOT_FOUND` becomes `Optional.empty()`. The outage test checks that callers still receive `UNAVAILABLE`.
+3. Follow the stalled lookup. Each call to `track` sets a fresh one-second deadline with `withDeadlineAfter`. The stalled call raises `DEADLINE_EXCEEDED`, and the same client can then look up another parcel successfully.
+
+```bash
+./mvnw -pl parcel-api '-Dit.test=Week03GrpcCarrierIT#returnsTheStatusForAKnownParcel' verify
+./mvnw -pl parcel-api -Dit.test=Week03GrpcCarrierIT verify
+```
+
+[Java gRPC tutorial](https://grpc.io/docs/languages/java/basics/) · [gRPC status codes](https://grpc.io/docs/guides/status-codes/) · [RPC deadlines](https://grpc.io/docs/guides/deadlines/)
 
 ## Weeks 4–5 · Shipment Event Processor
 
