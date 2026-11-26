@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+case "$(uname -s)" in Darwin) os=darwin;; Linux) os=linux;; *) exit 2;; esac
+case "$(uname -m)" in arm64|aarch64) arch=arm64;; x86_64) arch=amd64;; *) exit 2;; esac
+mkdir -p .lab/bin
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+fetch() { curl --connect-timeout 15 --fail --silent --show-error --location --retry 2 "$1" -o "$2"; }
+verified() {
+  fetch "$1" "$tmp/data"
+  fetch "$2" "$tmp/checksum"
+  expected=$(awk 'NR==1{print $1}' "$tmp/checksum")
+  actual=$(shasum -a 256 "$tmp/data" | awk '{print $1}')
+  [[ "$expected" == "$actual" ]] || { echo "Checksum mismatch" >&2; exit 1; }
+}
+kind_url="https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-$os-$arch"
+verified "$kind_url" "$kind_url.sha256sum"
+install -m 755 "$tmp/data" .lab/bin/kind
+kube_url="https://dl.k8s.io/release/v1.37.3/bin/$os/$arch/kubectl"
+verified "$kube_url" "$kube_url.sha256"
+install -m 755 "$tmp/data" .lab/bin/kubectl
+helm_url="https://get.helm.sh/helm-v4.3.2-$os-$arch.tar.gz"
+verified "$helm_url" "$helm_url.sha256sum"
+tar xzf "$tmp/data" -C "$tmp" "$os-$arch/helm"
+install -m 755 "$tmp/$os-$arch/helm" .lab/bin/helm

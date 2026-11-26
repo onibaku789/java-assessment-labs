@@ -1,0 +1,5 @@
+image: parcel-study-release:1
+region: north-yard
+accepting: true
+autoscale: false
+replicas: 2

@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="urn:parcel:carrier"
+ xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+ targetNamespace="urn:parcel:carrier">
+ <types><xs:schema targetNamespace="urn:parcel:carrier" elementFormDefault="qualified">
+  <xs:element name="Track" type="xs:string"/>
+  <xs:element name="TrackResponse" type="xs:string"/>
+  <xs:element name="UnknownParcel" type="xs:string"/>
+ </xs:schema></types>
+ <message name="Input"><part name="body" element="tns:Track"/></message>
+ <message name="Output"><part name="body" element="tns:TrackResponse"/></message>
+ <message name="Missing"><part name="detail" element="tns:UnknownParcel"/></message>
+ <portType name="Carrier"><operation name="Track"><input message="tns:Input"/>
+  <output message="tns:Output"/><fault name="UnknownParcel" message="tns:Missing"/>
+ </operation></portType>
+ <binding name="CarrierBinding" type="tns:Carrier">
+  <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+  <operation name="Track"><soap:operation soapAction="urn:parcel:Track"/>
+   <input><soap:body use="literal"/></input><output><soap:body use="literal"/></output>
+   <fault name="UnknownParcel"><soap:fault name="UnknownParcel" use="literal"/></fault>
+  </operation></binding>
+ <service name="Carrier"><port name="CarrierPort" binding="tns:CarrierBinding">
+  <soap:address location="http://127.0.0.1:18083/carrier"/>
+ </port></service>
+</definitions>
