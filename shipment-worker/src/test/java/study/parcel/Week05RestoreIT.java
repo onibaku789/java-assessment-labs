@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
 @ExtendWith(OutputCaptureExtension.class)
-class Week05RestoreContract {
+class Week05RestoreIT {
     @Container final GenericContainer<?> store = LocalAws.objectsContainer();
 
     @Test void restoreTwoDatasetSizesThreeTimesAndPreserveAnExistingReceipt(CapturedOutput output)

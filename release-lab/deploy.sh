@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source ./tools.sh
 [[ -f .lab/cluster-owned ]]
-docker build -t parcel-study-release:1 .
+docker build -f Dockerfile -t parcel-study-release:1 ..
 kind load docker-image parcel-study-release:1 --name parcel-study
 helm upgrade --install parcel ./chart --wait --timeout 3m
 kubectl run parcel-client --image=python:3.15.2-alpine --image-pull-policy=IfNotPresent \

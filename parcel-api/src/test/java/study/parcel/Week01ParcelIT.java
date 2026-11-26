@@ -1,6 +1,7 @@
 package study.parcel;
 
 import java.net.URI;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,7 +20,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.username=sa", "spring.datasource.password="})
 @AutoConfigureMockMvc(addFilters = false)
 @Transactional
-class Week01ParcelContract extends ParcelTestKeys {
+@Disabled("Enable when starting Week 1")
+class Week01ParcelIT extends ParcelTestKeys {
     @Autowired MockMvc http;
     @Autowired JdbcTemplate db;
 

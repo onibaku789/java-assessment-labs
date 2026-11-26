@@ -1,5 +1,6 @@
 package study.parcel;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,7 +17,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
 @SpringBootTest
-class Week08SqlContract extends ParcelTestKeys {
+@Disabled("Enable when starting Week 8")
+class Week08SqlIT extends ParcelTestKeys {
     @Container static final GenericContainer<?> DB = new GenericContainer<>("postgres:19.0-alpine")
             .withEnv("POSTGRES_USER", "learner").withEnv("POSTGRES_PASSWORD", "study")
             .withEnv("POSTGRES_DB", "parcels").withExposedPorts(5432)

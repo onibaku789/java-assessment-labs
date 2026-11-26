@@ -13,7 +13,8 @@ import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 import static org.assertj.core.api.Assertions.*;
 
 @Testcontainers
-class Week04DeliveryContract {
+@Disabled("Enable when starting Week 4")
+class Week04DeliveryIT {
     // Fresh emulators for each test isolate the worker's fixed bucket and queue names.
     @Container final GenericContainer<?> store = LocalAws.objectsContainer();
     @Container final GenericContainer<?> broker = LocalAws.queueContainer();

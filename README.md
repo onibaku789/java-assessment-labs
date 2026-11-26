@@ -2,54 +2,98 @@
 
 Build a parcel tracking API, make shipment processing safe to retry, and operate a Java service on Kubernetes. The eight-week path takes about 5–7 hours per week. Each project starts with working code and two baseline tests. The checkboxes below are the work to do.
 
-## Run your first exercise test
+## Run the tests
 
-Run the first contract from the folder containing this README.
+From the repository root, install the project JDK once with SDKMAN and select it in each new shell. [SDKMAN installation](https://sdkman.io/install/)
 
 ```bash
-./check.sh 1
+sdk env install
+sdk env
+./mvnw --version
 ```
 
-Start with `createReturns201AndLocationThatRetrievesThePersistedParcel`. On the starter it expects **201 Created** and receives **405 Method Not Allowed**. Implement `POST /parcels` in [ParcelController.java](parcel-api/src/main/java/study/parcel/ParcelController.java), then rerun the same command. The test sends this JSON and follows the URL in the response’s `Location` header.
+The Maven Wrapper downloads Maven 3.10.2 on first use. Surefire runs the six JUnit Jupiter smoke tests. Failsafe discovers the eight weekly JUnit integration suites during `verify`. Week 5 is enabled on the starter, so a full build starts with **seven passing tests**. Start Docker before running the full build.
+
+```bash
+./mvnw test       # Smoke tests across all three projects
+./mvnw verify     # Smoke tests plus every enabled weekly suite
+```
+
+In IntelliJ IDEA, open the root `pom.xml` as a Maven project, select the SDKMAN Temurin 25 JDK and **Maven Wrapper** distribution, and run **Lifecycle → verify** in the root Maven project. Each weekly class and its methods also have JUnit run actions.
+
+### Work on a branch and merge into main
+
+Use one branch per exercise. Start Week 1 from the latest merged version of `main`.
+
+```bash
+git switch main
+git pull --ff-only
+git switch -c feat/week-01-parcel-creation
+```
+
+Enable the Week 1 suite, implement the exercise, and run the tests. Then publish your branch and open a pull request.
+
+```bash
+./mvnw verify
+git add parcel-api/
+git diff --cached
+git commit -m "Implement parcel creation"
+git push -u origin HEAD
+gh pr create --base main --fill
+```
+
+New commits pushed to the same branch update the pull request and rerun CI. Once the **verify** check passes, review **Files changed** on GitHub and choose **Squash and merge**. Then run `git switch main` and `git pull --ff-only` locally before creating the next exercise branch.
+
+### Start Week 1
+
+Open [Week01ParcelIT.java](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) and remove the class annotation `@Disabled("Enable when starting Week 1")`. Leave completed weeks enabled so they continue to run. Run the Week 1 suite from the repository root.
+
+```bash
+./mvnw -pl parcel-api -Dit.test=Week01ParcelIT verify
+```
+
+Start with `createReturns201AndLocationThatRetrievesThePersistedParcel`. On the starter it expects **201 Created** and receives **405 Method Not Allowed**. Implement `POST /parcels` in [ParcelController.java](parcel-api/src/main/java/study/parcel/ParcelController.java). The test sends the JSON below, then retrieves the saved parcel using the response’s `Location` header.
 
 ```json
 {"trackingId":"P-201","status":"IN_TRANSIT","destination":"Leeds"}
 ```
 
-Run one week at a time. A failing assertion names the behavior you still need to implement or demonstrate. The weekly suites run explicitly through `check.sh`. The ordinary `mvn test` and `package` lifecycle continues to run the starter smoke tests. To rerun just that first method from this folder, use the following command.
+To repeat that method, add its name to the Failsafe filter.
 
 ```bash
-cd parcel-api
-method=createReturns201AndLocationThatRetrievesThePersistedParcel
-../toolchain.sh mvn "-Dtest=Week01ParcelContract#$method" test
+./mvnw -pl parcel-api '-Dit.test=Week01ParcelIT#createReturns201AndLocationThatRetrievesThePersistedParcel' verify
 ```
 
-| Command        | What the automated check expects                                                                                                                                                                                                                                                                                                                                                  |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `./check.sh 1` | [Creation contract](parcel-api/src/test/java/study/parcel/Week01ParcelContract.java). Persist a parcel, follow its location, reject invalid data, handle a replay and preserve the original read contract.                                                                                                                                                                        |
-| `./check.sh 2` | [Security contract](parcel-api/src/test/java/study/parcel/Week02SecurityContract.java). Accept a reader, deny an observer, validate the signature and claims, and allow the browser’s preflight.                                                                                                                                                                                  |
-| `./check.sh 3` | [Carrier contract](parcel-api/src/test/java/study/parcel/Week03CarrierContract.java). Implement the [Java adapter](parcel-api/src/main/java/study/parcel/CarrierClient.java). Return the status on success, an empty optional for the declared fault, and an I/O error for a stalled service within five seconds. The suite starts the supplied Python carrier on a private port. |
-| `./check.sh 4` | [Delivery contract](shipment-worker/src/test/java/study/parcel/Week04DeliveryContract.java). One receipt per event under concurrent delivery or replay, separate receipts for separate events, and eventual recovery after a failed write.                                                                                                                                        |
-| `./check.sh 5` | [Restore contract](shipment-worker/src/test/java/study/parcel/Week05RestoreContract.java). Restore two dataset sizes three times each, verify independent SHA-256 digests, print timings and preserve an existing receipt. The supplied restore should already pass.                                                                                                              |
-| `./check.sh 6` | [Readiness checks](release-lab/check_release.py). Use the release quick start below, change the region, and pause one running replica. Run the check while it is unready, then remove the pause file.                                                                                                                                                                             |
-| `./check.sh 7` | [Operations checks](release-lab/check_release.py). Enable the HPA, generate sustained load, deploy a revision with `accepting=false`, and roll it back. Run the check after rollback while scaling events are still available.                                                                                                                                                    |
-| `./check.sh 8` | [SQL contract](parcel-api/src/test/java/study/parcel/Week08SqlContract.java). Return the same 100 Bath parcels while touching fewer PostgreSQL shared buffers than the sequential-scan baseline. Apply your index through the application’s schema or migration so it works on a fresh database.                                                                                  |
+| Week and JUnit suite | What to demonstrate |
+| --- | --- |
+| 1 · [Parcel creation](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) | Persist a parcel, follow its location, reject invalid data, handle a replay and preserve the original read behavior. |
+| 2 · [API security](parcel-api/src/test/java/study/parcel/Week02SecurityIT.java) | Accept a reader, deny an observer, validate signatures and claims, and allow browser preflight. |
+| 3 · [SOAP carrier](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java) | Implement the [carrier adapter](parcel-api/src/main/java/study/parcel/CarrierClient.java). Return the status on success, an empty result for an unknown parcel, and an I/O error within five seconds for a stalled request. JUnit starts a loopback Java HTTP fixture. |
+| 4 · [Shipment delivery](shipment-worker/src/test/java/study/parcel/Week04DeliveryIT.java) | Write one receipt per event under concurrent delivery or replay and recover from a failed write. |
+| 5 · [Backup and restore](shipment-worker/src/test/java/study/parcel/Week05RestoreIT.java) | Restore two dataset sizes three times each, verify SHA-256 digests, record timings and preserve an existing receipt. |
+| 6 · [Kubernetes readiness](release-lab/src/test/java/study/parcel/Week06ReleaseIT.java) | Change the region, pause readiness on one live replica, and verify traffic reaches only ready endpoints. Run locally while the replica is paused. |
+| 7 · [Scaling and rollback](release-lab/src/test/java/study/parcel/Week07OperationsIT.java) | Generate CPU load with the HPA enabled, deploy a bad revision, then roll back. Run locally after recovery while scaling events remain available. |
+| 8 · [SQL query plan](parcel-api/src/test/java/study/parcel/Week08SqlIT.java) | Return the same 100 Bath parcels with fewer PostgreSQL shared-buffer accesses than the sequential-scan baseline. Apply the index on a fresh database. |
 
-Weeks 1 and 2 use in-memory H2. Week 1 exercises HTTP and persistence with security filters disabled so it remains runnable after Week 2. Week 2 runs the real filter chain and gives the application an ephemeral RSA public key via `spring.security.oauth2.resourceserver.jwt.public-key-location`. Use that property in your decoder. Test tokens are signed for issuer `urn:parcel:study`, audience `parcel-api`, and scope `parcel.read` or `parcel.observe`.
+Weeks 1 and 2 use in-memory H2. Week 1 exercises HTTP and persistence with security filters disabled. Week 2 runs the real filter chain and provides an ephemeral RSA public key through `spring.security.oauth2.resourceserver.jwt.public-key-location`. Use that property in your decoder. The issuer is `urn:parcel:study`, the audience is `parcel-api`, and the scopes are `parcel.read` and `parcel.observe`.
 
-Weeks 4, 5 and 8 need a running Docker engine. Their tests start and remove isolated containers on temporary ports. Weeks 6 and 7 inspect the dedicated kind cluster you deploy and send a short traffic sample through its Service. The weekly checkboxes below also identify evidence to collect yourself, including the browser trace, recovery objective, protocol choices, JVM profile and licence decision.
+Weeks 4, 5 and 8 use Testcontainers with a running Docker engine. Weeks 6 and 7 read the dedicated kind cluster created by the release quick start below. The tests use the Kubernetes API to read the Helm release history and sample traffic through the Service proxy. Remove the weekly `@Disabled` annotation to enable either suite locally. Keep the GitHub Actions condition on both classes.
+
+### Continuous integration
+
+[GitHub Actions](.github/workflows/ci.yml) uses the official Eclipse Temurin 25 JDK container to run `./mvnw --batch-mode --no-transfer-progress --fail-at-end verify` for pull requests targeting `main`, pushes to `main`, and manual runs. An enabled failing test fails the build. Open the run’s **junit-reports** artifact for Surefire and Failsafe XML, including failures and skips. Locally the same files are under each module’s `target/surefire-reports/` and `target/failsafe-reports/`.
 
 ## Start with the parcel API
 
-Use macOS or Linux with Docker Compose, Bash, curl, tar and shasum. The shared launcher downloads Java 25 LTS and Maven on first use. The browser, token and carrier exercises also use Python 3.15.2 and OpenSSL. All services run locally.
+Use macOS or Linux with Docker Compose, Bash, curl, tar and shasum. Run `sdk env` from the project root before starting a lab in a new terminal. The browser, token and carrier exercises also use Python 3.15.2 and OpenSSL. All services run locally.
 
 Run these commands from the folder containing this README.
 
 ```bash
 cd parcel-api
 docker compose up -d --wait
-../toolchain.sh mvn clean package
-../toolchain.sh java -jar target/parcel-api-1.0.0.jar
+../mvnw clean package
+java -jar target/parcel-api-1.0.0.jar
 ```
 
 In a second terminal, run `curl -i http://127.0.0.1:18081/parcels/P-100`. Expect HTTP 200 with status `IN_TRANSIT`. Your first change is to let a caller create another parcel and retrieve it at the URL returned by the API.
@@ -69,7 +113,7 @@ Open a terminal at the project root. Start the emulators and follow one event th
 ```bash
 cd shipment-worker
 docker compose up -d
-../toolchain.sh mvn clean package
+../mvnw clean package
 ./worker.sh init
 ./worker.sh send fixtures/delivered.json
 ./worker.sh once
