@@ -5,7 +5,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -185,6 +187,19 @@ class Week01ParcelIT extends ParcelTestKeys {
 
         private int rows(String id) {
             return db.queryForObject("SELECT count(*) FROM parcel WHERE tracking_id = ?", Integer.class, id);
+        }
+
+        @Test
+        void lookupReturnsTheStoredCreationTime() throws Exception {
+            var createdAt = Instant.parse("2025-03-12T09:15:30Z");
+            db.update("INSERT INTO parcel (tracking_id, status, destination, created_at) VALUES (?, ?, ?, ?)",
+                    "P-CREATED-AT", "IN_TRANSIT", "York", Timestamp.from(createdAt));
+
+            var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/parcels/P-CREATED-AT"))
+                    .timeout(TIMEOUT).GET().build();
+            var response = http.send(request, ofString());
+            assertThat(response.statusCode()).isEqualTo(200);
+            assertThat(Instant.parse(json.readTree(response.body()).required("createdAt").asString())).isEqualTo(createdAt);
         }
 
         @Test
