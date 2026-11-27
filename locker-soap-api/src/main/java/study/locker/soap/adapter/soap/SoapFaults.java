@@ -19,9 +19,9 @@ final class SoapFaults extends AbstractSoapFaultDefinitionExceptionResolver {
 
     @Override
     protected SoapFaultDefinition getFaultDefinition(Object endpoint, Exception error) {
-        if (!(error instanceof GatewayFailure)) return null;
+        if (!(error instanceof GatewayFailure failure)) return null;
         var definition = new SoapFaultDefinition();
-        definition.setFaultCode(SoapFaultDefinition.SERVER);
+        definition.setFaultCode("INVALID_ARGUMENT".equals(failure.code()) ? SoapFaultDefinition.CLIENT : SoapFaultDefinition.SERVER);
         return definition;
     }
 

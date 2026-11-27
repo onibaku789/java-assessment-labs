@@ -46,12 +46,13 @@ export function requestFor({ op, protocol, id, key, code }) {
     let query;
     if (op === "available") query = "{ available { id site size } }";
     else if (op === "get") {
-      query = "query($id:ID!){ reservation(id:$id){ " + fields + " } }";
+      query = "query($id:UUID!){ reservation(id:$id){ " + fields + " } }";
       variables.id = id;
     } else {
+      const idType = op === "reserve" ? "ID!" : "UUID!";
       const args = op === "reserve" ? "compartmentId:$id" : "id:$id";
       query =
-        "mutation($id:ID!, $key:ID!" +
+        `mutation($id:${idType}, $key:UUID!` +
         (op === "collect" ? ", $code:String!" : "") +
         "){ " +
         field +
@@ -68,7 +69,7 @@ export function requestFor({ op, protocol, id, key, code }) {
     return {
       method: "POST",
       path: "/graphql",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "application/graphql-response+json" },
       body: JSON.stringify({ query, variables }),
     };
   }
@@ -94,13 +95,20 @@ export function requestFor({ op, protocol, id, key, code }) {
   };
 }
 
+class ApiError extends Error {
+  constructor(code, message) {
+    super([code, message].filter(Boolean).join(" · ") || "Request failed");
+    this.code = code;
+  }
+}
+
 export function decode(protocol, op, ok, text) {
   if (protocol === "SOAP" && text.trimStart().startsWith("<")) {
     const xml = new DOMParser().parseFromString(text, "application/xml");
     const value = (node, tag) =>
       node.getElementsByTagNameNS("urn:lockers:v1", tag)[0]?.textContent;
     if (!ok || xml.querySelector("parsererror"))
-      throw Error(value(xml, "code") || "SOAP request failed");
+      throw new ApiError(value(xml, "code"), value(xml, "message") || "SOAP request failed");
     if (op === "available")
       return Array.from(
         xml.getElementsByTagNameNS("urn:lockers:v1", "items"),
@@ -117,9 +125,11 @@ export function decode(protocol, op, ok, text) {
     };
   }
   const obj = JSON.parse(text);
-  if (!ok) throw Error(obj.code || obj.message || "Request failed");
-  if (obj.errors)
-    throw Error(obj.errors[0].extensions?.code || obj.errors[0].message);
+  if (protocol === "GraphQL" && obj.errors?.length) {
+    const [error] = obj.errors;
+    throw new ApiError(error.extensions?.code, error.message);
+  }
+  if (!ok) throw new ApiError(obj.code, obj.message);
   return protocol === "GraphQL"
     ? obj.data[op === "get" ? "reservation" : op]
     : obj;

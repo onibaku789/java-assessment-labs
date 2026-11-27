@@ -5,13 +5,22 @@ import static org.awaitility.Awaitility.await;
 import static study.locker.verification.StackClient.*;
 
 import org.openqa.selenium.*;
+import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.Select;
 
 import java.time.Duration;
 import java.util.*;
 
 abstract class ManualBrowser {
+    static final String LAB = "http://localhost:" + System.getenv().getOrDefault("LAB_PORT", "18080");
     WebDriver driver;
+
+    void startBrowser() {
+        var options = new ChromeOptions().addArguments("--headless=new", "--window-size=1440,1080",
+                "--disable-dev-shm-usage");
+        driver = new ChromeDriver(options);
+    }
 
     String trace() {
         return element("flow-panel").getDomAttribute("data-trace");

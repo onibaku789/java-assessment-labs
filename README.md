@@ -22,7 +22,7 @@ This leaves the stack running. The JUnit suite reserves a compartment over REST,
 | Mailpit inbox | http://localhost:18025 | Inspect pickup messages by reservation ID |
 | S3-compatible receipt store | http://localhost:19090 | The verification override exposes this loopback port |
 
-To start only the application stack, run `./scripts/compose up -d`. To stop it and retain its data, run `./scripts/compose down`. The database, Kafka offsets and messages, inbox and receipt store have dedicated volumes. Keep `.lab/keys` with the installation. It holds the signing key, pickup secret and database passwords needed after a restart.
+To start only the application stack, run `./scripts/compose up -d`. To stop it and retain its data, run `./scripts/compose down`. PostgreSQL, Kafka, Mailpit, the receipt store and Vault each have persistent storage. Keep `.lab/keys` for JWT signing and database access. The [pickup key operations](#pickup-key-operations) describe the additional state needed to recover encrypted mail and reservation replays.
 
 ### Try the journey in a browser
 
@@ -31,7 +31,7 @@ From the repository root, run `sdk env` and `./scripts/manual-lab up`. This star
 1. As **Customer**, choose an available compartment and click **Reserve compartment**. The default protocol is REST. Copy the reservation ID or use the ID that the screen carries forward.
 2. Switch to **Courier** and click **Deposit parcel** to call SOAP. To try an authorization failure, attempt the deposit as Customer first.
 3. Open the [Mailpit inbox](http://localhost:18025). Find the message with your reservation ID in its subject. Switch back to **Customer**, enter the eight-digit code, and click **Collect parcel** to call GraphQL.
-4. Expand a row in **Request history** to inspect its wire format, HTTP status, application response and duration. **Retry last command** repeats its original identity, protocol, input and request UUID. GraphQL can return an application error inside HTTP 200. The operation selector also supports lookup, cancellation before deposit, and code reissue. You can choose any protocol for any operation.
+4. Expand a row in **Request history** to inspect its wire format, HTTP status, application response and duration. **Retry last command** repeats its original identity, protocol, input and request UUID. For a malformed reservation ID, the history shows `INVALID_ARGUMENT` with HTTP 400 for REST and GraphQL, or HTTP 500 with a SOAP 1.1 `Client` fault. GraphQL errors raised during execution can appear inside HTTP 200. The operation selector also supports lookup, cancellation before deposit, and code reissue. You can choose any protocol for any operation.
 
 Click **View reservation logs** on the reservation card to open its events in [Grafana](http://localhost:13000/d/locker-overview/locker-overview). The dashboard also shows gateway request rate, errors and p95 duration by protocol. An increasing **outbox** count points to events awaiting publication in PostgreSQL. Increasing **Kafka consumer lag** points to published records still awaiting a worker's committed offset. Delivery counters distinguish successful sends or writes, identical receipt replays, retries and exhausted deliveries. Allow a few seconds for log shipping and metric scrapes. A latency percentile requires traffic in the selected time window.
 
@@ -124,10 +124,10 @@ curl -i -H "Authorization: Bearer $CUSTOMER" -H "Idempotency-Key: $REQUEST" \
   http://localhost:18081/v1/reservations
 ```
 
-Copy the reservation `id` from the response. Send this GraphQL mutation to `/graphql` with the courier token, a fresh request UUID and that reservation ID. The pickup message arrives in Mailpit with the reservation ID in its subject.
+Copy the reservation `id` from the response. Send this GraphQL mutation to `/graphql` with the courier token, `Accept: application/graphql-response+json`, a fresh request UUID and that reservation ID. Update existing GraphQL operations to declare reservation ID inputs and `requestId` as `UUID!`. Compartment IDs such as `CENTRAL-L1` use `ID!`. Clients requesting legacy `application/json` receive HTTP 200 for invalid UUIDs and can read `errors[].extensions.code`. After a successful deposit, the pickup message arrives in Mailpit with the reservation ID in its subject.
 
 ```graphql
-mutation Deposit($request: ID!, $id: ID!) {
+mutation Deposit($request: UUID!, $id: UUID!) {
   deposit(requestId: $request, id: $id) { id compartmentId state }
 }
 ```
@@ -180,13 +180,15 @@ flowchart LR
     DB -->|Outbox relay| K[Kafka]
     K -->|Pickup mail| N[Notification worker]
     K -->|Lifecycle events| A[Receipt worker]
+    B -->|Encrypt mail and verify commands or codes| T[Vault Transit]
+    N -->|Decrypt mail| T
     N --> M[Mailpit]
     A --> O[(S3 receipts)]
 ```
 
 The directory owns sites, compartment sizes and IDs. Reservations owns occupancy and the state transitions. Each uses a separate PostgreSQL role and Liquibase schema. A partial unique index allows only one active reservation per compartment. A row lock serializes deposits, failed code attempts, collection and cancellation. Cancellation and collection make the compartment available again. The [protobuf contract](locker-contracts/src/main/proto/locker.proto) defines both internal services. By default, the gateway allows four seconds for Reservations, which allows two seconds for the Directory.
 
-Spring Security checks signed JWTs at each public gateway. Reservations verifies the forwarded token on the internal gRPC call. The issuer is `urn:locker:lab` and the audience is `locker-api`. The cluster and Compose use private-network plaintext transport, local signing keys, Mailpit and an S3 emulator for this exercise.
+Spring Security checks signed JWTs at each public gateway. Reservations verifies the forwarded token on the internal gRPC call. The issuer is `urn:locker:lab` and the audience is `locker-api`. The internal gRPC transport uses plaintext in the lab. Both deployments use TLS for Vault, local JWT signing keys, Mailpit and an S3 emulator.
 
 ### Following a reservation through the code
 
@@ -212,6 +214,31 @@ State changes and outbox rows commit together. The relay publishes with the rese
 The default pickup policy expires a code after 15 minutes and locks it after five failed attempts. Reissue resets the counter and invalidates the old code. PostgreSQL stores a keyed verifier. The mail job carries an AES-GCM envelope. Public responses and audit receipts omit the code. SMTP delivery is at least once. A crash after SMTP accepts a message can cause a duplicate email with the same event identity.
 
 Both workers validate decoded version-1 events before delivery. An invalid field sends the original record directly to the source topic plus `.dlt`. Validation diagnostics identify the fields. Malformed JSON, conflicting receipts and permanently rejected recipients go directly to the dead-letter topic. An unavailable destination pauses the listener with its offset pending. For a receipt conflict, compare the dead-letter event with the receipt at the event’s key before replay. For expired pickup mail, request a fresh code. Kafka and storage use one instance each in the local lab.
+
+### Pickup key operations
+
+Reservations calls Vault Transit over TLS to encrypt each pickup email and compute HMACs. The email event ID is authenticated with the ciphertext. The notification worker can decrypt that envelope. Each service has its own Vault policy. Compose authenticates them with AppRole and kind uses projected Kubernetes service-account tokens. Spring Cloud Vault manages their sessions.
+
+| Transit key | Purpose | Existing data that requires old versions |
+| --- | --- | --- |
+| `pickup-mail` | Encrypt and decrypt the pickup code | Queued or replayed pickup emails |
+| `pickup-verifier` | Check a submitted code | Active deposited reservations |
+| `command-fingerprint` | Check whether an idempotency key was reused with the same input | Saved command results, including failed attempts |
+
+Rotate any one key independently. New writes use its latest version. Keep earlier versions available while their records can still be read or replayed.
+
+```bash
+./scripts/vault-lab rotate compose pickup-mail
+./scripts/vault-lab rotate kind command-fingerprint
+```
+
+**First upgrade.** Use `./scripts/compose up -d` or `./scripts/kind-deploy`. The bootstrap imports the original pickup key and the historical mail key so the new services can read old records without rewriting them. It briefly stops Reservations and Notifications to save a PostgreSQL dump, retained pickup-mail records, partition offsets, consumer offsets and the original key under `.lab/vault/<target>/pre-transit/`. Once the new services have written versioned records, rolling back to the old application requires restoring the matching pre-upgrade data as well.
+
+**Restart and recovery.** Compose keeps Vault data in the `locker-vault` volume and kind uses PVC `data-vault-0`. Back up that storage while Vault is stopped and keep a separate protected copy of `.lab/vault/<target>/`, which includes administrator credentials, the unseal share and TLS material. Restore the matching storage and recovery material together. The lab runs one Vault instance and a helper that automatically supplies one unseal share after restart. Anyone with the recovery file can administer that installation.
+
+**During an outage.** A command that needs Vault rolls back and returns gRPC `UNAVAILABLE`. Retry with the original request ID. The notification worker retains its Kafka offset and retries decryption when Vault returns, subject to the pickup code’s expiry. Compose defaults to a 500 ms connect timeout and a 1,000 ms read timeout. Set `LOCKER_VAULT_CONNECT_TIMEOUT_MS` and `LOCKER_VAULT_READ_TIMEOUT_MS` to override them. The equivalent Helm values are `vault.connectTimeoutMs` and `vault.readTimeoutMs`.
+
+[Vault Transit](https://developer.hashicorp.com/vault/docs/secrets/transit) · [Importing existing keys](https://developer.hashicorp.com/vault/docs/commands/transit/import) · [Spring Cloud Vault authentication](https://docs.spring.io/spring-cloud-vault/reference/authentication.html)
 
 ### Resilience and recovery
 

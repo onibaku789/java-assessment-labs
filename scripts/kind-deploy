@@ -31,7 +31,9 @@ for node in $(kind get nodes --name "$name"); do
         docker exec -i "$node" ctr -n k8s.io images import --platform "linux/$arch" -
 done
 kubectl create namespace lockers --dry-run=client -o yaml | kubectl apply -f -
+./scripts/kind-vault
+./scripts/vault-cutover kind
 kubectl -n lockers create secret generic locker-db --from-env-file=.lab/keys/database.env --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n lockers create secret generic locker-config \
-    --from-file=.lab/keys/public.pem --from-file=.lab/keys/pickup.key --dry-run=client -o yaml | kubectl apply -f -
+    --from-file=.lab/keys/public.pem --dry-run=client -o yaml | kubectl apply -f -
 helm upgrade --install lockers deploy/locker -n lockers --set-string imageTag="$tag" --wait --timeout 6m

@@ -1,5 +1,6 @@
 valkeyImage: valkey/valkey:8.1.12-alpine
 imageTag: lab
+vault: {connectTimeoutMs: 500, readTimeoutMs: 1000}
 restReplicas: 2
 restReadinessPath: /actuator/health/readiness
 autoscale: false

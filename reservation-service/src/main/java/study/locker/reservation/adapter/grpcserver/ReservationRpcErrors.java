@@ -1,6 +1,7 @@
 package study.locker.reservation.adapter.grpcserver;
 
 import io.grpc.*;
+import study.locker.common.PickupTransit;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.grpc.server.exception.GrpcExceptionHandler;
 import org.springframework.security.access.AccessDeniedException;
@@ -12,6 +13,8 @@ import study.locker.reservation.domain.model.ReservationFailure;
 final class ReservationRpcErrors implements GrpcExceptionHandler {
     @Override
     public StatusException handleException(Throwable failure) {
+        if (failure instanceof PickupTransit.Unavailable)
+            return Status.UNAVAILABLE.withDescription("Pickup key service unavailable").asException();
         if (failure instanceof AuthenticationException || failure instanceof AccessDeniedException) return null;
         if (failure instanceof ReservationFailure problem)
             return status(problem).withDescription(problem.getMessage()).asException();
@@ -19,9 +22,13 @@ final class ReservationRpcErrors implements GrpcExceptionHandler {
             return Status.INVALID_ARGUMENT.withDescription(
                     invalid.getConstraintViolations().iterator().next().getMessage()).asException();
         }
+        return transportFailure(failure);
+    }
+
+    private static StatusException transportFailure(Throwable failure) {
         if (failure instanceof StatusRuntimeException rpc) return rpc.getStatus().asException(rpc.getTrailers());
         if (failure instanceof StatusException rpc) return rpc;
-        System.getLogger(getClass().getName())
+        System.getLogger(ReservationRpcErrors.class.getName())
                 .log(System.Logger.Level.ERROR, "Reservation RPC failed with " + failure.getClass().getName());
         return Status.INTERNAL.withDescription("Service failure").asException();
     }

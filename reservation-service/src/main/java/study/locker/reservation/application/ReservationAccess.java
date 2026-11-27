@@ -5,9 +5,9 @@ import study.locker.reservation.domain.model.Reservation;
 import java.util.List;
 
 public interface ReservationAccess {
-    record Request(String operation, String requestId, String target, String fingerprint) {
+    record Request(String operation, String requestId, String target, String fingerprintInput) {
         public CommandHandler.Command commandFor(String subject) {
-            return new CommandHandler.Command(subject, operation, ReservationQueries.parseId(requestId), fingerprint);
+            return new CommandHandler.Command(subject, operation, ReservationQueries.parseId(requestId), fingerprintInput);
         }
     }
 

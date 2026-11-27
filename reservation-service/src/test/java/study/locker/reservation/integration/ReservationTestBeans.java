@@ -18,8 +18,10 @@ import java.util.concurrent.atomic.AtomicReference;
         "spring.jpa.properties.hibernate.session_factory.statement_inspector=study.locker.reservation.integration.ReservationQueryIT$SqlCapture"})
 @Import({ReservationTestDatabase.class, ReservationTestServer.class})
 abstract class ReservationTestBeans {
-    @TestBean(methodName = "testSecrets")
-    PickupSecrets secrets;
+    @org.springframework.beans.factory.annotation.Autowired
+    TransitFixture vault;
+    @org.springframework.beans.factory.annotation.Autowired
+    PickupTransit secrets;
 
     @TestBean(methodName = "testTime")
     Clock clock;
@@ -31,10 +33,6 @@ abstract class ReservationTestBeans {
     Directory directory;
 
     static final AtomicReference<Instant> now = new AtomicReference<>();
-
-    static PickupSecrets testSecrets() {
-        return new PickupSecrets(Base64.getEncoder().encodeToString(new byte[32]));
-    }
 
     static Clock testTime() {
         return new Clock() {

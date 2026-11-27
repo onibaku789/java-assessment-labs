@@ -80,10 +80,12 @@ class LockerJourneyIT {
         assertThat(call(api, "get", customer, "invalid", "", "").code())
                 .isEqualTo("INVALID_ARGUMENT");
         String slot = availableSlot(api);
-        String request = key();
+        String request = key().toUpperCase(Locale.ROOT);
         var reserved = call(api, "reserve", customer, slot, request, "");
         assertThat(reserved.state()).isEqualTo("RESERVED");
         assertThat(call(api, "reserve", customer, slot, request, "")).isEqualTo(reserved);
+        Protocol replayProtocol = api == GRAPHQL ? REST : GRAPHQL;
+        assertThat(call(replayProtocol, "reserve", customer, slot, request, "")).isEqualTo(reserved);
         assertThat(call(api, "reserve", customer, slot, key(), "").code())
                 .isEqualTo("ALREADY_EXISTS");
         assertThat(call(api, "get", customer, reserved.id(), "", "")).isEqualTo(reserved);
@@ -105,7 +107,8 @@ class LockerJourneyIT {
     @ParameterizedTest
     @EnumSource(Protocol.class)
     void commandValidationHasTheSamePublicFaultsAtEveryGateway(Protocol api) throws Exception {
-        assertThat(call(api, "reserve", observer, " ", "invalid", "").code())
+        assertThat(call(api, "reserve", null, "CENTRAL-S1", "invalid", "").code()).isEqualTo("UNAUTHENTICATED");
+        assertThat(call(api, "reserve", observer, "CENTRAL-S1", key(), "").code())
                 .isEqualTo("PERMISSION_DENIED");
         for (String invalid : List.of("", "   ", "x".repeat(101))) {
             assertThat(call(api, "reserve", customer, invalid, key(), "").code())

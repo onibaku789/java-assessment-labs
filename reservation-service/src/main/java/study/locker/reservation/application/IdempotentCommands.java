@@ -4,7 +4,7 @@ import study.locker.reservation.domain.model.ReservationFailure;
 
 import java.util.function.Supplier;
 
-public record IdempotentCommands(CommandJournal journal) implements CommandHandler {
+public record IdempotentCommands(CommandJournal journal, CommandFingerprints fingerprints) implements CommandHandler {
     @Override
     public Execution execute(Command command, Supplier<Result> work) {
         var subject = command.subject();
@@ -13,13 +13,14 @@ public record IdempotentCommands(CommandJournal journal) implements CommandHandl
         var saved = journal.find(subject, key);
         if (saved.isPresent()) return replay(command, saved.get());
 
+        var fingerprint = fingerprints.create(command.fingerprintInput());
         var result = work.get();
-        journal.save(subject, key, new CommandJournal.Entry(command.fingerprint(), result));
+        journal.save(subject, key, new CommandJournal.Entry(fingerprint, result));
         return new Execution(result, false);
     }
 
-    private static Execution replay(Command command, CommandJournal.Entry entry) {
-        if (!entry.fingerprint().equals(command.fingerprint())) {
+    private Execution replay(Command command, CommandJournal.Entry entry) {
+        if (!fingerprints.matches(command.fingerprintInput(), entry.fingerprint())) {
             throw new ReservationFailure(ReservationFailure.Reason.REUSED_KEY,
                     "Request ID already used for different input");
         }

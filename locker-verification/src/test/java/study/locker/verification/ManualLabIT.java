@@ -8,7 +8,6 @@ import static study.locker.verification.StackClient.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.openqa.selenium.*;
-import org.openqa.selenium.chrome.*;
 import org.openqa.selenium.support.ui.Select;
 
 import java.time.Duration;
@@ -16,7 +15,6 @@ import java.util.*;
 
 @EnabledIfSystemProperty(named = "locker.manual", matches = "true")
 class ManualLabIT extends ManualBrowser {
-    private static final String LAB = "http://localhost:" + System.getenv().getOrDefault("LAB_PORT", "18080");
     private String id;
 
     @Test
@@ -39,9 +37,7 @@ class ManualLabIT extends ManualBrowser {
         await().atMost(Duration.ofSeconds(30))
                 .until(() -> LabTelemetry.sample("timestamp(up{service=\"graphql\"} == 1)") > started);
         double initial = LabTelemetry.sample(counter);
-        var options = new ChromeOptions().addArguments("--headless=new", "--window-size=1440,1080",
-                "--disable-dev-shm-usage");
-        driver = new ChromeDriver(options);
+        startBrowser();
 
         try {
             String journeyWindow = driver.getWindowHandle();

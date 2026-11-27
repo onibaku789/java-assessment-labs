@@ -44,6 +44,8 @@ class SoapContractIT {
         assertThat(response.statusCode()).isEqualTo(500);
         var fault = (Element) xml(response.body()).getElementsByTagNameNS("http://schemas.xmlsoap.org/soap/envelope/",
                 "Fault").item(0);
+        String faultCode = fault.getElementsByTagName("faultcode").item(0).getTextContent();
+        assertThat(faultCode.substring(faultCode.indexOf(':') + 1)).isEqualTo("Client");
         var detail = (Element) fault.getElementsByTagName("detail").item(0);
         var problem = (Element) detail.getElementsByTagNameNS(CONTRACT, "LockerFault").item(0);
         assertThat(problem.getElementsByTagNameNS(CONTRACT, "code").item(0).getTextContent()).isEqualTo(

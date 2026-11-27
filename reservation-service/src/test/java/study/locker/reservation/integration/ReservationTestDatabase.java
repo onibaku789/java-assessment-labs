@@ -10,6 +10,21 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @TestConfiguration(proxyBeanMethods = false)
 class ReservationTestDatabase {
     @Bean(initMethod = "start", destroyMethod = "stop")
+    study.locker.common.TransitFixture vault() {
+        return new study.locker.common.TransitFixture();
+    }
+
+    @Bean
+    DynamicPropertyRegistrar vaultProperties(study.locker.common.TransitFixture vault) {
+        String token = vault.token("reservations");
+        return registry -> {
+            registry.add("spring.cloud.vault.uri", vault::uri);
+            registry.add("spring.cloud.vault.token", () -> token);
+            registry.add("spring.cloud.vault.read-timeout", () -> 600);
+        };
+    }
+
+    @Bean(initMethod = "start", destroyMethod = "stop")
     PostgreSQLContainer postgres() {
         return new PostgreSQLContainer("postgres:19.0-alpine");
     }

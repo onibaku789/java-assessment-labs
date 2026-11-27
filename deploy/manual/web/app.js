@@ -84,21 +84,15 @@ function feedback(text, error = false) {
   $("feedback").classList.toggle("bad", error);
 }
 
-function addHistory(command, wire, response, status, elapsed, traceId) {
+function addHistory(command, wire, response, status, outcome, elapsed, traceId) {
   const item = document.createElement("details"),
     title = document.createElement("summary"),
     detail = document.createElement("pre");
   const safe = (text) =>
     command.code ? text.replaceAll(command.code, "[masked]") : text;
-  title.textContent =
-    command.protocol +
-    " · " +
-    command.op +
-    " · " +
-    status +
-    " · " +
-    elapsed +
-    " ms";
+  const http = status === "Network error" ? status : `HTTP ${status}`;
+  title.textContent = [command.protocol, command.op, outcome, http, `${elapsed} ms`]
+    .filter(Boolean).join(" · ");
   detail.textContent = safe(
     [
       wire.method + " " + wire.path,
@@ -139,6 +133,7 @@ async function execute(command, retry = false) {
   const attempt = startAttempt(command.protocol, command.op, retry);
   const started = performance.now();
   let success = false;
+  let outcome = "";
   let status = "Network error",
     raw = "";
   try {
@@ -182,6 +177,7 @@ async function execute(command, retry = false) {
           : "Reservation is " + value.state.toLowerCase() + ".",
     );
   } catch (error) {
+    outcome = error.code || "Failed";
     feedback(error.message, true);
   } finally {
     finishAttempt(attempt.id, status, success);
@@ -190,6 +186,7 @@ async function execute(command, retry = false) {
       wire,
       raw,
       status,
+      outcome,
       Math.round(performance.now() - started),
       attempt.id,
     );

@@ -16,7 +16,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.junit.jupiter.*;
 
-import study.locker.common.PickupSecrets;
 import study.locker.delivery.EventDecoder;
 
 import tools.jackson.databind.ObjectMapper;
@@ -56,7 +55,7 @@ class PickupMailValidationIT extends PickupMailInfrastructure {
         docker.pauseContainerCmd(inbox.getContainerId()).exec();
         try {
             producer.send(TOPIC, reservation, message(event, reservation, "test@example.test", expires,
-                    new PickupSecrets(KEY).seal(event, "01234567"))).get(10, TimeUnit.SECONDS);
+                    vault.transit("reservations").seal(event, "01234567"))).get(10, TimeUnit.SECONDS);
             await().atMost(Duration.ofSeconds(20)).until(() -> count("waiting_for_dependency") > parkedBefore);
             when(clock.instant()).thenReturn(expires);
         } finally {
@@ -64,6 +63,25 @@ class PickupMailValidationIT extends PickupMailInfrastructure {
         }
         await().atMost(Duration.ofSeconds(20)).until(() -> count("expired") > expiredBefore);
         assertThat(inboxMessages()).doesNotContain(reservation);
+    }
+
+    @Test
+    void pendingMailResumesWhenVaultRecovers() throws Exception {
+        String reservation = UUID.randomUUID().toString();
+        String event = UUID.randomUUID().toString();
+        String envelope = vault.transit("reservations").seal(event, "01234567");
+        double parked = count("waiting_for_dependency");
+        var docker = vault.getDockerClient();
+        docker.pauseContainerCmd(vault.getContainerId()).exec();
+        try {
+            producer.send(TOPIC, reservation, message(event, reservation, "test@example.test",
+                    Instant.now().plusSeconds(120), envelope)).get(10, TimeUnit.SECONDS);
+            await().atMost(Duration.ofSeconds(15)).until(() -> count("waiting_for_dependency") > parked);
+            assertThat(inboxMessages()).doesNotContain(reservation);
+        } finally {
+            docker.unpauseContainerCmd(vault.getContainerId()).exec();
+        }
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertThat(inboxMessages()).contains(reservation));
     }
 
     @Autowired
@@ -78,6 +96,7 @@ class PickupMailValidationIT extends PickupMailInfrastructure {
     @Test
     void invalidEventGoesStraightToDeadLettersAndOnlyTheValidMessageSendsMail() throws Exception {
         double expiredBefore = count("expired");
+        double sentBefore = count("sent");
         String reservation = UUID.randomUUID().toString();
         String invalid = message("not-a-uuid", reservation, "not-an-address", Instant.now().plusSeconds(600),
                 "private-test-envelope");
@@ -92,7 +111,7 @@ class PickupMailValidationIT extends PickupMailInfrastructure {
         // GCM authenticates the original event ID text, including its case.
         String eventId = UUID.randomUUID().toString().toUpperCase(Locale.ROOT);
         String valid = message(eventId, reservation, "test@example.test", Instant.now().plusSeconds(600),
-                new PickupSecrets(KEY).seal(eventId, "01234567"));
+                vault.transit("reservations").seal(eventId, "01234567"));
 
         try (var dlt = deadLetters()) {
             dlt.subscribe(List.of(TOPIC + ".dlt"));
@@ -112,15 +131,15 @@ class PickupMailValidationIT extends PickupMailInfrastructure {
                 assertThat(dead).containsExactly(invalid, invalidFields, "{}");
                 var sent = metrics.find("locker.worker.deliveries").tags("topic", TOPIC, "outcome", "sent").counter();
                 assertThat(sent).isNotNull();
-                assertThat(sent.count()).isEqualTo(1);
+                assertThat(sent.count()).isEqualTo(sentBefore + 1);
             });
         }
         assertThat(metrics.get("locker.worker.deliveries").tags("topic", TOPIC, "outcome", "expired").counter()
                 .count()).isEqualTo(expiredBefore + 1);
         verify(decoder, times(1)).decode(eq(invalid), any());
         var messages = json.readTree(inboxMessages()).path("messages");
-        assertThat(messages.size()).isOne();
-        assertThat(messages.get(0).path("Subject").asString()).isEqualTo("Pickup ready for " + reservation);
+        assertThat(messages.valueStream().map(item -> item.path("Subject").asString()))
+                .filteredOn(("Pickup ready for " + reservation)::equals).hasSize(1);
     }
 
     private String message(String id, String reservation, String recipient, Instant expires, String envelope) {

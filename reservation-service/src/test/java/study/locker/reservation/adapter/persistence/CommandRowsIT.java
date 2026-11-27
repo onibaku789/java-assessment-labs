@@ -21,7 +21,7 @@ import java.util.UUID;
 
 @Testcontainers
 @SpringBootTest(
-        classes = CommandRowsIT.PersistenceConfig.class,
+        classes = CommandRowsIT.PersistenceConfig.class, properties = "spring.cloud.vault.enabled=false",
         webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class CommandRowsIT {
     @org.springframework.boot.test.context.TestComponent

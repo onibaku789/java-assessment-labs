@@ -6,7 +6,6 @@ umask 077
 cd .lab/keys
 if [[ ! -s private.pem ]]; then openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out private.pem 2>/dev/null; fi
 openssl rsa -in private.pem -pubout -out public.pem 2>/dev/null
-if [[ ! -s pickup.key ]]; then openssl rand -base64 32 > pickup.key; fi
 if [[ ! -s database.env ]]; then
     for name in POSTGRES_PASSWORD DIRECTORY_PASSWORD RESERVATIONS_PASSWORD; do
         printf '%s=%s\n' "$name" "$(openssl rand -hex 24)"
@@ -16,5 +15,5 @@ if ! grep -q '^LAB_READER_PASSWORD=' database.env; then
     printf 'LAB_READER_PASSWORD=%s\n' "$(openssl rand -hex 24)" >>database.env
 fi
 # Containers run as an unprivileged UID. Only runtime files are mounted.
-chmod 644 public.pem pickup.key
+chmod 644 public.pem
 chmod 700 .

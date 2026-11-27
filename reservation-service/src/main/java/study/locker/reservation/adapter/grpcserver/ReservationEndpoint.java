@@ -4,7 +4,6 @@ import org.springframework.grpc.server.service.GrpcService;
 
 import io.grpc.stub.StreamObserver;
 
-import study.locker.common.PickupSecrets;
 import study.locker.reservation.application.ReservationAccess;
 import study.locker.reservation.domain.model.Reservation;
 import study.locker.wire.*;
@@ -14,11 +13,9 @@ import java.util.Base64;
 @GrpcService
 public final class ReservationEndpoint extends ReservationsGrpc.ReservationsImplBase {
     private final ReservationAccess access;
-    private final PickupSecrets secrets;
 
-    public ReservationEndpoint(ReservationAccess access, PickupSecrets secrets) {
+    public ReservationEndpoint(ReservationAccess access) {
         this.access = access;
-        this.secrets = secrets;
     }
 
     @Override
@@ -59,9 +56,8 @@ public final class ReservationEndpoint extends ReservationsGrpc.ReservationsImpl
     }
 
     private ReservationAccess.Request request(String operation, Command command) {
-        String fingerprint = secrets.fingerprint(
-                "command:" + operation + ":" + Base64.getEncoder().encodeToString(command.toByteArray()));
-        return new ReservationAccess.Request(operation, command.getRequestId(), command.getId(), fingerprint);
+        String input = "command:" + operation + ":" + Base64.getEncoder().encodeToString(command.toByteArray());
+        return new ReservationAccess.Request(operation, command.getRequestId(), command.getId(), input);
     }
 
     private static Booking wire(Reservation.View v) {

@@ -27,10 +27,11 @@ HOSTS = {f"localhost:{LAB_PORT}", f"127.0.0.1:{LAB_PORT}"}
 if LAB_PORT == 80:
     HOSTS.update({"localhost", "127.0.0.1"})
 ACTORS = {"customer": "lab-customer", "courier": "lab-courier"}
+RESERVATION_SEGMENT = r"(?!\.{1,2}(?:/|$))[A-Za-z0-9._~-]+"
 ROUTES = {
     "rest": {
-        "GET": r"/v1/(?:compartments|reservations/[0-9a-fA-F-]{36})",
-        "POST": r"/v1/reservations(?:/[0-9a-fA-F-]{36}/(?:deposit|cancel|reissue|collect))?",
+        "GET": rf"/v1/(?:compartments|reservations/{RESERVATION_SEGMENT})",
+        "POST": rf"/v1/reservations(?:/{RESERVATION_SEGMENT}/(?:deposit|cancel|reissue|collect))?",
     },
     "graphql": {"POST": r"/graphql"},
     "soap": {"POST": r"/soap/lockers"},
@@ -102,7 +103,7 @@ class Lab(BaseHTTPRequestHandler):
         body = self.rfile.read(size) if size else None
         headers = {
             k: self.headers[k]
-            for k in ("Content-Type", "SOAPAction", "Idempotency-Key")
+            for k in ("Accept", "Content-Type", "SOAPAction", "Idempotency-Key")
             if self.headers.get(k)
         }
         parent = self.headers.get("traceparent", "")

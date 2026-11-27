@@ -8,6 +8,11 @@
     <artifactId>locker-graphql-api</artifactId>
     <dependencies>
         <dependency>
+            <groupId>com.graphql-java</groupId>
+            <artifactId>graphql-java-extended-scalars</artifactId>
+            <version>24.1</version>
+        </dependency>
+        <dependency>
             <groupId>study.locker</groupId>
             <artifactId>locker-edge</artifactId>
             <version>1.0.0</version>
@@ -15,6 +20,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-graphql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-graphql-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
     <build><plugins>

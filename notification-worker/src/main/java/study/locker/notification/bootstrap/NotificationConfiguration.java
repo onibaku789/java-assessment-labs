@@ -4,14 +4,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.*;
 import org.springframework.mail.javamail.JavaMailSender;
 
-import study.locker.common.PickupSecrets;
+import org.springframework.vault.core.VaultOperations;
+import study.locker.common.PickupTransit;
+import study.locker.notification.adapter.crypto.TransitDecryptor;
 import study.locker.delivery.*;
 import study.locker.notification.adapter.smtp.SmtpPickupMail;
 import study.locker.notification.application.DeliverPickupNotification;
 import study.locker.notification.domain.model.PickupNotification;
 
-import java.io.IOException;
-import java.nio.file.*;
 import java.time.Clock;
 
 @Configuration(proxyBeanMethods = false)
@@ -26,12 +26,10 @@ class NotificationConfiguration {
     DeliverPickupNotification delivery(
             Clock clock,
             JavaMailSender sender,
-            @Value("${locker.secret:/run/locker/pickup.key}") String path,
-            @Value("${locker.mail.from:lockers@example.test}") String from)
-            throws IOException {
-        var secrets = new PickupSecrets(Files.readString(Path.of(path)));
+            VaultOperations vault,
+            @Value("${locker.mail.from:lockers@example.test}") String from) {
         return new DeliverPickupNotification(
-                clock, secrets::open, new SmtpPickupMail(sender, from));
+                clock, new TransitDecryptor(new PickupTransit(vault)), new SmtpPickupMail(sender, from));
     }
 
     @Bean

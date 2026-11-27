@@ -65,7 +65,7 @@ abstract class ReservationFixture extends ReservationTestBeans {
         var mail = json.readTree(
                 db.sql("select payload from outbox where" + " topic='locker.pickup-mail.v1' order by seq desc" +
                         " limit 1").query(String.class).single());
-        return secrets.open(mail.get("eventId").asString(), mail.get("envelope").asString());
+        return vault.transit("notifications").open(mail.get("eventId").asString(), mail.get("envelope").asString());
     }
 
     void assertRowCounts(int bookings, int journal, int outbox) {

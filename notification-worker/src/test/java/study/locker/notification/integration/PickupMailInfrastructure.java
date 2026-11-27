@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.junit.jupiter.api.io.TempDir;
+import study.locker.common.TransitFixture;
 import org.springframework.test.context.*;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
@@ -12,9 +12,8 @@ import org.testcontainers.junit.jupiter.*;
 import org.testcontainers.kafka.KafkaContainer;
 
 import java.net.URI;
+import java.util.Map;
 import java.net.http.*;
-import java.nio.file.*;
-import java.util.*;
 
 abstract class PickupMailInfrastructure {
     @Container
@@ -25,14 +24,15 @@ abstract class PickupMailInfrastructure {
             8025).waitingFor(Wait.forHttp("/api/v1/messages").forPort(8025));
 
     static final String TOPIC = "locker.pickup-mail.v1";
-    static final String KEY = Base64.getEncoder().encodeToString(new byte[32]);
-    @TempDir
-    static Path config;
+    @Container
+    static final TransitFixture vault = new TransitFixture();
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry properties) throws Exception {
-        Path secret = Files.writeString(config.resolve("pickup.key"), KEY);
-        properties.add("locker.secret", secret::toString);
+        String token = vault.token("notifications");
+        properties.add("spring.cloud.vault.uri", vault::uri);
+        properties.add("spring.cloud.vault.token", () -> token);
+        properties.add("spring.cloud.vault.read-timeout", () -> 600);
         properties.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
         properties.add("spring.mail.host", inbox::getHost);
         properties.add("spring.mail.port", () -> inbox.getMappedPort(1025));

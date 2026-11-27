@@ -123,13 +123,14 @@ final class StackClient {
         Map<String, String> vars = new HashMap<>();
         if (op.equals("available")) query = "{available(site:\"Central\",size:\"SMALL\"){id site size}}";
         else if (op.equals("get")) {
-            query = "query($id:ID!){reservation(id:$id){id state compartmentId}}";
+            query = "query($id:UUID!){reservation(id:$id){id state compartmentId}}";
             vars.put("id", id);
         } else {
             query = mutation(op, id, request, code, vars);
         }
         var r = send("POST", local(18082) + "/graphql", actor, "application/json",
-                JSON.writeValueAsString(Map.of("query", query, "variables", vars)), Map.of());
+                JSON.writeValueAsString(Map.of("query", query, "variables", vars)),
+                Map.of("Accept", "application/graphql-response+json"));
         if (r.statusCode() == 401) return error("UNAUTHENTICATED");
         var result = JSON.readTree(r.body());
         if (result.has("errors"))
@@ -141,7 +142,8 @@ final class StackClient {
     private static String mutation(String op, String id, String request, String code, Map<String, String> vars) {
         boolean collect = op.equals("collect");
         String arg = op.equals("reserve") ? "compartmentId" : "id";
-        String query = "mutation($id:ID!,$key:ID!" + (collect ? ",$code:String!" : "") + "){" + op + "(" + arg +
+        String idType = op.equals("reserve") ? "ID!" : "UUID!";
+        String query = "mutation($id:" + idType + ",$key:UUID!" + (collect ? ",$code:String!" : "") + "){" + op + "(" + arg +
                 ":$id,requestId:$key" + (collect ? ",code:$code" : "") + "){id state compartmentId}}";
         vars.put("id", id);
         vars.put("key", request);

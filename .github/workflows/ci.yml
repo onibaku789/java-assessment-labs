@@ -23,6 +23,9 @@ jobs:
       - name: Start locker services
         run: |
           ./scripts/lab-keys
+          ./scripts/vault-lab prepare compose
+          docker compose --env-file .lab/keys/database.env up -d vault vault-unseal
+          ./scripts/vault-lab configure compose
           docker compose --env-file .lab/keys/database.env up -d --build
       - name: Verify all three protocols and both workers
         run: |
