@@ -6,16 +6,16 @@ import io.opentelemetry.context.Context;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 
-import study.locker.reservation.application.Caller;
 import study.locker.reservation.application.CommandHandler;
 
 import java.util.HashMap;
+import java.util.function.Supplier;
 
 /** PostgreSQL resets this setting at transaction end, including on rollback. */
 public record TraceCommandTransaction(JdbcClient db, CommandHandler delegate)
         implements CommandHandler {
     @Override
-    public Execution execute(Caller caller, Command command) {
+    public Execution execute(Command command, Supplier<Result> work) {
         if (Span.current().getSpanContext().isSampled()) {
             var headers = new HashMap<String, String>();
             W3CTraceContextPropagator.getInstance()
@@ -25,6 +25,6 @@ public record TraceCommandTransaction(JdbcClient db, CommandHandler delegate)
                     .query(String.class)
                     .single();
         }
-        return delegate.execute(caller, command);
+        return delegate.execute(command, work);
     }
 }

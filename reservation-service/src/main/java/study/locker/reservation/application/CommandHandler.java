@@ -7,7 +7,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 public interface CommandHandler {
-    record Command(String operation, UUID requestId, String fingerprint, Supplier<Result> work) {
+    record Command(String subject, String operation, UUID requestId, String fingerprint) {
     }
 
     record Result(Reservation.View view, String error) {
@@ -20,5 +20,5 @@ public interface CommandHandler {
     record Execution(Result result, boolean replayed) {
     }
 
-    Execution execute(Caller caller, Command command);
+    Execution execute(Command command, Supplier<Result> work);
 }

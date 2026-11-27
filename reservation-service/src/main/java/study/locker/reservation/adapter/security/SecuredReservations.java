@@ -35,10 +35,9 @@ public class SecuredReservations implements ReservationAccess {
     @PreAuthorize("hasAuthority('SCOPE_locker.read')")
     public Reservation.View get(String id) {
         Authentication auth = authentication();
-        Optional<String> owner = auth.getAuthorities().stream()
-                .anyMatch(a -> "SCOPE_locker.deposit".equals(a.getAuthority())) ? Optional.empty() : Optional.of(
-                auth.getName());
-        return queries.get(owner, id);
+        boolean canReadAll = auth.getAuthorities().stream()
+                .anyMatch(authority -> "SCOPE_locker.deposit".equals(authority.getAuthority()));
+        return queries.get(canReadAll ? Optional.empty() : Optional.of(auth.getName()), id);
     }
 
     @Override
@@ -75,8 +74,8 @@ public class SecuredReservations implements ReservationAccess {
         var jwt = ((JwtAuthenticationToken) authentication()).getToken();
         var caller = new Caller(jwt.getSubject(), jwt.getClaimAsString("email"),
                 Boolean.TRUE.equals(jwt.getClaim("email_verified")));
-        return submission.submit(caller, request.operation(), request.parsedId(), request.target(),
-                request.fingerprint(), work);
+        return submission.submit(request.commandFor(caller.subject()), request.target(),
+                target -> work.apply(caller, target));
     }
 
     private static Authentication authentication() {

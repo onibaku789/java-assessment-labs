@@ -6,6 +6,7 @@ import study.locker.reservation.domain.model.*;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.function.Consumer;
 
 public record ReservationCommands(ReservationStore store, Directory directory, PickupCodes codes,
                                   ReservationEvents events, Clock clock) {
@@ -26,20 +27,12 @@ public record ReservationCommands(ReservationStore store, Directory directory, P
 
     public CommandHandler.Result deposit(String target) {
         var booking = locked(target);
-        var now = clock.instant();
-        var issued = codes.issue(booking, now);
-        booking.deposit(issued.pickup());
-        events.pickupMail(booking, issued);
-        return save(booking, now, "DEPOSITED", null);
+        return issuePickupCode(booking, booking::deposit, "DEPOSITED");
     }
 
     public CommandHandler.Result reissue(Caller caller, String target) {
         var booking = owned(caller, target);
-        var now = clock.instant();
-        var issued = codes.issue(booking, now);
-        booking.reissue(issued.pickup());
-        events.pickupMail(booking, issued);
-        return save(booking, now, "CODE_REISSUED", null);
+        return issuePickupCode(booking, booking::reissue, "CODE_REISSUED");
     }
 
     public CommandHandler.Result collect(Caller caller, String target, String code) {
@@ -48,6 +41,14 @@ public record ReservationCommands(ReservationStore store, Directory directory, P
         var id = booking.view().id();
         var error = booking.collect(now, verifier -> codes.matches(id, code, verifier));
         return save(booking, now, "COLLECTED", error.orElse(null));
+    }
+
+    private CommandHandler.Result issuePickupCode(Reservation booking, Consumer<PickupCode> applyCode, String event) {
+        var now = clock.instant();
+        var issued = codes.issue(booking, now);
+        applyCode.accept(issued.pickup());
+        events.pickupMail(booking, issued);
+        return save(booking, now, event, null);
     }
 
     private Reservation owned(Caller caller, String target) {

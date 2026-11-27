@@ -33,6 +33,21 @@ class ReservationBookIT extends ReservationFixture {
     }
 
     @Test
+    void identicalRequestsFromTwoCustomersReplayTheirOwnBookings() {
+        var alice = client(customer);
+        var bob = client(channel, "bob");
+        var request = cmd("CENTRAL-S1");
+        var firstBooking = alice.reserve(request);
+        alice.cancel(cmd(firstBooking.getId()));
+
+        var secondBooking = bob.reserve(request);
+        assertThat(secondBooking.getId()).isNotEqualTo(firstBooking.getId());
+        assertThat(alice.reserve(request)).isEqualTo(firstBooking);
+        assertThat(bob.reserve(request)).isEqualTo(secondBooking);
+        assertRowCounts(2, 3, 3);
+    }
+
+    @Test
     void concurrentReservationsHaveExactlyOneWinner() throws Exception {
         try (var threads = Executors.newVirtualThreadPerTaskExecutor()) {
             var start = new CountDownLatch(1);
