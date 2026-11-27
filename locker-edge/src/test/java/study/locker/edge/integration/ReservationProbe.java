@@ -6,6 +6,7 @@ import study.locker.common.Rpc;
 import study.locker.wire.*;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
@@ -13,6 +14,8 @@ final class ReservationProbe extends ReservationsGrpc.ReservationsImplBase imple
     private static final Context.Key<String> AUTHORIZATION = Context.key("test-authorization");
     final List<String> calls = new CopyOnWriteArrayList<>();
     volatile long remainingMillis;
+    final CompletableFuture<Void> held = new CompletableFuture<>();
+    final CompletableFuture<Void> release = new CompletableFuture<>();
     private Server server;
     private ManagedChannel channel;
 
@@ -46,7 +49,29 @@ final class ReservationProbe extends ReservationsGrpc.ReservationsImplBase imple
             remainingMillis = Context.current().getDeadline().timeRemaining(TimeUnit.MILLISECONDS);
             return;
         }
+        if (id.equals("held")) {
+            held.complete(null);
+            release.thenRun(() -> completeLookup(id, reply));
+            return;
+        }
+        completeLookup(id, reply);
+    }
+
+    private static void completeLookup(String id, StreamObserver<Booking> reply) {
         reply.onNext(Booking.newBuilder().setId(id).build());
         reply.onCompleted();
+    }
+
+    @Override
+    public void available(Search query, StreamObserver<Compartments> reply) {
+        calls.add("available");
+        reply.onNext(Compartments.getDefaultInstance());
+        reply.onCompleted();
+    }
+
+    @Override
+    public void deposit(Command command, StreamObserver<Booking> reply) {
+        calls.add(command.getRequestId());
+        reply.onError(Status.UNAVAILABLE.asRuntimeException());
     }
 }

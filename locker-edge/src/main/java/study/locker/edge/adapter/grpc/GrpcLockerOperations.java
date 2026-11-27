@@ -3,7 +3,7 @@ package study.locker.edge.adapter.grpc;
 import io.grpc.*;
 import io.grpc.stub.MetadataUtils;
 
-import study.locker.common.RpcGuard;
+import study.locker.common.RpcCalls;
 import study.locker.edge.application.*;
 import study.locker.common.Rpc;
 import study.locker.wire.*;
@@ -19,10 +19,10 @@ import java.util.function.Supplier;
 public class GrpcLockerOperations implements LockerOperations {
     private final ReservationsBlockingStub base;
     private final Supplier<String> callerToken;
-    private final RpcGuard guard;
+    private final RpcCalls calls;
 
-    public GrpcLockerOperations(Channel channel, RpcGuard guard, Supplier<String> callerToken) {
-        this.guard = guard;
+    public GrpcLockerOperations(Channel channel, RpcCalls calls, Supplier<String> callerToken) {
+        this.calls = calls;
         this.callerToken = callerToken;
         base = ReservationsGrpc.newBlockingStub(channel);
     }
@@ -42,8 +42,8 @@ public class GrpcLockerOperations implements LockerOperations {
     }
 
     @Override
-    public Reservation get(String id) {
-        var key = Key.newBuilder().setId(text(id)).build();
+    public Reservation get(String reservationId) {
+        var key = Key.newBuilder().setId(text(reservationId)).build();
         return reservation(rpc(true, client -> client.get(key)));
     }
 
@@ -98,7 +98,8 @@ public class GrpcLockerOperations implements LockerOperations {
     private <T> T rpc(boolean replay, Function<ReservationsBlockingStub, T> call) {
         try {
             var client = authenticatedStub();
-            return guard.call(replay, deadline -> call.apply(client.withDeadline(deadline)));
+            Function<Deadline, T> attempt = deadline -> call.apply(client.withDeadline(deadline));
+            return replay ? calls.replayable(attempt) : calls.once(attempt);
         } catch (StatusRuntimeException failure) {
             var status = failure.getStatus();
             throw new GatewayFailure(status.getCode().name(), status.getDescription());

@@ -4,6 +4,7 @@ import io.grpc.Context;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import org.springframework.resilience.InvocationRejectedException;
 
 /**
  * Downstream failure markers travel through gRPC trailers so each breaker measures its own
@@ -18,7 +19,7 @@ final class RpcFailures {
     private RpcFailures() {}
 
     static boolean ignoreInBreaker(Throwable failure) {
-        return failure instanceof StatusRuntimeException rpc
+        return failure instanceof InvocationRejectedException || failure instanceof StatusRuntimeException rpc
                 && (rpc.getStatus().getCode() == Status.Code.CANCELLED || hasTrailer(rpc, ORIGIN));
     }
 

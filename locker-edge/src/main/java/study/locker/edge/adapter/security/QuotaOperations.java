@@ -1,13 +1,15 @@
 package study.locker.edge.adapter.security;
 
-import org.aopalliance.intercept.MethodInterceptor;
-import org.aopalliance.intercept.MethodInvocation;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.springframework.core.annotation.Order;
 
-public record QuotaOperations(CallerQuota quota) implements MethodInterceptor {
-    @Override
-    public Object invoke(MethodInvocation invocation) throws Throwable {
+@Aspect
+@Order(2)
+public record QuotaOperations(CallerQuota quota) {
+    @Before("execution(public * study.locker.edge.application.LockerOperations.*(..))")
+    public void chargeCaller() {
         var jwt = CurrentCaller.jwt();
         quota.charge(jwt.getClaimAsString("iss"), jwt.getSubject());
-        return invocation.proceed();
     }
 }

@@ -47,16 +47,16 @@ class LostCommandReplyIT extends ReservationFixture {
                 .build().start();
         var link = Rpc.channel("127.0.0.1:" + faulty.getPort());
         var metrics = new SimpleMeterRegistry();
-        var guard = new RpcGuard("reservations", Duration.ofSeconds(2),
-                new RpcGuard.Settings(4, 20, 10, 50, Duration.ofSeconds(10), 2, Duration.ZERO, true), 4, metrics);
-        try {
+        var target = new RpcTarget("reservations", Duration.ofSeconds(2), 4);
+        try (var context = RpcClientFixture.open(target, metrics, Map.of("locker.rpc.backoff", "0ms"))) {
+            var calls = context.getBean(RpcCalls.class);
             var gateway = client(link, customer.getSubject());
             var reserve = cmd("CENTRAL-S1");
-            Booking booking = guard.call(true, limit -> gateway.withDeadline(limit).reserve(reserve));
+            Booking booking = calls.replayable(limit -> gateway.withDeadline(limit).reserve(reserve));
             assertRowCounts(1, 1, 1);
             deposit(booking.getId());
             var reject = cmd(booking.getId()).toBuilder().setCode("wrong").build();
-            assertThatGrpcFailure(() -> guard.call(true, limit -> gateway.withDeadline(limit).collect(reject)))
+            assertThatGrpcFailure(() -> calls.replayable(limit -> gateway.withDeadline(limit).collect(reject)))
                     .hasCode(FAILED_PRECONDITION)
                     .hasDescriptionContaining("Invalid pickup code");
             assertThat(db.sql("select attempts from booking").query(Integer.class).single()).isOne();
