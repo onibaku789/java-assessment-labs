@@ -25,10 +25,9 @@ class SoapContractIT {
         String soap = "http://schemas.xmlsoap.org/wsdl/soap/";
         var address = (Element) wsdl.getElementsByTagNameNS(soap, "address").item(0);
         assertThat(address.getAttribute("location")).isEqualTo(ENDPOINT);
-        var operations = wsdl.getElementsByTagNameNS(soap, "operation");
-        var actions = new java.util.ArrayList<String>();
-        for (int i = 0; i < operations.getLength(); i++)
-            actions.add(((Element) operations.item(i)).getAttribute("soapAction"));
+        var actions = elements(wsdl, soap, "operation")
+                .map(operation -> operation.getAttribute("soapAction"))
+                .toList();
         assertThat(actions).containsExactlyInAnyOrder("urn:lockers:available", "urn:lockers:get", "urn:lockers:reserve",
                 "urn:lockers:cancel", "urn:lockers:deposit", "urn:lockers:reissue", "urn:lockers:collect");
     }

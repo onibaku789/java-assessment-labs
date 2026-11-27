@@ -20,13 +20,9 @@ public class LockerSoap {
     public JAXBElement<Compartments> available(@RequestPayload JAXBElement<SearchInput> request) {
         var input = request.getValue();
         var response = new Compartments();
-        for (var slot : gateway.available(input.getSite(), input.getSize())) {
-            var item = new Compartment();
-            item.setId(slot.id());
-            item.setSite(slot.site());
-            item.setSize(slot.size());
-            response.getItems().add(item);
-        }
+        gateway.available(input.getSite(), input.getSize()).stream()
+                .map(LockerSoap::compartment)
+                .forEachOrdered(response.getItems()::add);
         return xml.createAvailableResponse(response);
     }
 
@@ -70,6 +66,14 @@ public class LockerSoap {
         var input = request.getValue();
         return xml.createCollectResponse(
                 booking(gateway.collect(input.getRequestId(), input.getId(), input.getCode())));
+    }
+
+    private static Compartment compartment(LockerOperations.Slot slot) {
+        var item = new Compartment();
+        item.setId(slot.id());
+        item.setSite(slot.site());
+        item.setSize(slot.size());
+        return item;
     }
 
     private static Booking booking(LockerOperations.Reservation value) {

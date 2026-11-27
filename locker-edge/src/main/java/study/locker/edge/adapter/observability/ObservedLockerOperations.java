@@ -8,6 +8,8 @@ import study.locker.common.EventLog;
 import study.locker.edge.application.GatewayFailure;
 import study.locker.edge.application.LockerOperations.Reservation;
 
+import java.util.stream.IntStream;
+
 public record ObservedLockerOperations(MeterRegistry metrics, String protocol) implements MethodInterceptor {
     @Override
     public Object invoke(MethodInvocation invocation) throws Throwable {
@@ -34,9 +36,9 @@ public record ObservedLockerOperations(MeterRegistry metrics, String protocol) i
 
     private static String argument(MethodInvocation invocation, String name) {
         var parameters = invocation.getMethod().getParameters();
-        for (int i = 0; i < parameters.length; i++) {
-            if (name.equals(parameters[i].getName())) return (String) invocation.getArguments()[i];
-        }
-        return null;
+        var index = IntStream.range(0, parameters.length)
+                .filter(i -> name.equals(parameters[i].getName()))
+                .findFirst();
+        return index.isPresent() ? (String) invocation.getArguments()[index.getAsInt()] : null;
     }
 }

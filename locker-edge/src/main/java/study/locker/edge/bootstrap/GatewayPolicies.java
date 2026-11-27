@@ -9,13 +9,18 @@ import study.locker.edge.adapter.security.CallerQuota;
 import study.locker.edge.adapter.security.QuotaOperations;
 import study.locker.edge.application.LockerOperations;
 
+import java.lang.reflect.Method;
+import java.util.Arrays;
+
 final class GatewayPolicies {
     private GatewayPolicies() {
     }
 
     static LockerOperations apply(LockerOperations target, MeterRegistry metrics, String protocol, CallerQuota quota) {
         var operations = new NameMatchMethodPointcut();
-        for (var method : LockerOperations.class.getDeclaredMethods()) operations.addMethodName(method.getName());
+        operations.setMappedNames(Arrays.stream(LockerOperations.class.getDeclaredMethods())
+                .map(Method::getName)
+                .toArray(String[]::new));
         var proxy = new ProxyFactory(target);
         proxy.setInterfaces(LockerOperations.class);
         proxy.addAdvisor(new DefaultPointcutAdvisor(operations, new ObservedLockerOperations(metrics, protocol)));

@@ -15,6 +15,9 @@ import java.security.*;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.*;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -165,10 +168,10 @@ final class StackClient {
         var doc = xml(r.body());
         if (r.statusCode() >= 400) return error(field(doc, "code"));
         if (op.equals("available")) {
-            var fields = doc.getElementsByTagNameNS("urn:lockers:v1", "id");
-            var ids = new ArrayList<String>();
-            for (int i = 0; i < fields.getLength(); i++) ids.add(fields.item(i).getTextContent());
-            return new Result("OK", String.join(",", ids), "", "");
+            String ids = elements(doc, "urn:lockers:v1", "id")
+                    .map(Element::getTextContent)
+                    .collect(Collectors.joining(","));
+            return new Result("OK", ids, "", "");
         }
         return new Result("OK", field(doc, "id"), field(doc, "state"), field(doc, "compartmentId"));
     }
@@ -179,15 +182,19 @@ final class StackClient {
         return parser.newDocumentBuilder().parse(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
     }
 
+    static Stream<Element> elements(Document document, String namespace, String name) {
+        var matches = document.getElementsByTagNameNS(namespace, name);
+        return IntStream.range(0, matches.getLength()).mapToObj(i -> (Element) matches.item(i));
+    }
+
     private static String field(Document doc, String name) {
         var node = doc.getElementsByTagNameNS("urn:lockers:v1", name).item(0);
         return node == null ? "" : node.getTextContent();
     }
 
     private static Result slots(JsonNode obj) {
-        var ids = new ArrayList<String>();
-        obj.forEach(s -> ids.add(s.path("id").asString()));
-        return new Result("OK", String.join(",", ids), "", "");
+        String ids = obj.valueStream().map(slot -> slot.path("id").asString()).collect(Collectors.joining(","));
+        return new Result("OK", ids, "", "");
     }
 
     private static Result booking(JsonNode obj) {
