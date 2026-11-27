@@ -27,7 +27,8 @@ jobs:
       - name: Verify all three protocols and both workers
         run: |
           docker run --rm --network host -v "$PWD:/src" -w /src -v locker-maven:/root/.m2 \
-            "$JDK_IMAGE" ./mvnw -B -ntp -pl locker-verification -Dlocker.stack=true verify
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$JDK_IMAGE" ./mvnw -B -ntp -pl locker-verification -Dlocker.stack=true -Dlocker.protocolQuotas=true verify
       - name: Stop the CI deployment
         if: always()
         run: |

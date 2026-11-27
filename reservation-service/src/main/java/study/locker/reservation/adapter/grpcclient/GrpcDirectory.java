@@ -1,23 +1,17 @@
 package study.locker.reservation.adapter.grpcclient;
 
+import study.locker.common.RpcGuard;
 import study.locker.reservation.application.Directory;
 import study.locker.wire.*;
 
-import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
-public record GrpcDirectory(DirectoryGrpc.DirectoryBlockingStub stub, Duration deadline)
+public record GrpcDirectory(DirectoryGrpc.DirectoryBlockingStub stub, RpcGuard guard)
         implements Directory {
-    public GrpcDirectory {
-        if (!deadline.isPositive())
-            throw new IllegalArgumentException("Directory deadline must be positive");
-    }
-
     public List<Slot> search(String site, String size) {
-        return stub
-                .withDeadlineAfter(deadline.toNanos(), TimeUnit.NANOSECONDS)
-                .searchCompartments(Search.newBuilder().setSite(site).setSize(size).build())
+        var query = Search.newBuilder().setSite(site).setSize(size).build();
+        return guard
+                .call(false, deadline -> stub.withDeadline(deadline).searchCompartments(query))
                 .getItemsList()
                 .stream()
                 .map(c -> new Slot(c.getId(), c.getSite(), c.getSize()))
@@ -25,7 +19,7 @@ public record GrpcDirectory(DirectoryGrpc.DirectoryBlockingStub stub, Duration d
     }
 
     public void requireCompartment(String id) {
-        stub.withDeadlineAfter(deadline.toNanos(), TimeUnit.NANOSECONDS)
-                .getCompartment(Key.newBuilder().setId(id).build());
+        var key = Key.newBuilder().setId(id).build();
+        guard.call(false, deadline -> stub.withDeadline(deadline).getCompartment(key));
     }
 }

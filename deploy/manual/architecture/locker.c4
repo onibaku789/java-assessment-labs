@@ -10,6 +10,7 @@ model {
   soap = gateway 'SOAP'
   reservations = service 'Reservations'
   directory = service 'Directory'
+  valkey = storage 'Valkey quota'
   postgres = storage 'PostgreSQL'
   relay = service 'Outbox relay'
   kafka = storage 'Kafka'
@@ -23,6 +24,9 @@ model {
   rest -> reservations
   graphql -> reservations
   soap -> reservations
+  rest -> valkey
+  graphql -> valkey
+  soap -> valkey
   reservations -> directory
   reservations -> postgres
   directory -> postgres

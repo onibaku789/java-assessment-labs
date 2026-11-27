@@ -22,7 +22,7 @@ if ! kubectl -n kube-system get deploy metrics-server >/dev/null 2>&1; then
 fi
 kubectl wait apiservice/v1beta1.metrics.k8s.io --for=condition=Available --timeout=3m
 changed=true
-helm upgrade lockers deploy/locker -n lockers --reuse-values --set autoscale=true --wait --timeout 4m
+helm upgrade lockers deploy/locker -n lockers --reuse-values --set autoscale=true --set-string apps.rest.env.LOCKER_QUOTA_RATE=60000 --set-string apps.rest.env.LOCKER_QUOTA_BURST=1000 --wait --timeout 4m
 k port-forward service/rest 19181:8080 --address 127.0.0.1 >.lab/drill-forward.log 2>&1 &
 forward_pid=$!
 for i in {1..30}; do curl -fsS http://127.0.0.1:19181/actuator/health/readiness >/dev/null 2>&1 && break; sleep 1; done

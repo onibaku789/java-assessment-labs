@@ -7,6 +7,7 @@
     </parent>
     <artifactId>notification-worker</artifactId>
     <dependencies>
+        <dependency><groupId>org.eclipse.angus</groupId><artifactId>angus-mail</artifactId></dependency>
         <dependency>
             <groupId>study.locker</groupId>
             <artifactId>locker-delivery</artifactId>

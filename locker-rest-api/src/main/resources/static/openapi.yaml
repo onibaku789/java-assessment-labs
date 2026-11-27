@@ -27,6 +27,9 @@ paths:
                 type: array
                 items:
                   "$ref": "#/components/schemas/Slot"
+        '429': { "$ref": "#/components/responses/QuotaExceeded" }
+        '503': { description: Dependency unavailable or at capacity }
+        '504': { description: Upstream deadline exceeded }
         default:
           description: Invalid input, authentication, ownership, availability or state
             error. Domain faults include a gRPC code and message.
@@ -47,6 +50,9 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Reservation"
+        '429': { "$ref": "#/components/responses/QuotaExceeded" }
+        '503': { description: Dependency unavailable or at capacity }
+        '504': { description: Upstream deadline exceeded }
         default:
           description: Invalid input, authentication, ownership, availability or state
             error. Domain faults include a gRPC code and message.
@@ -82,6 +88,9 @@ paths:
             Location:
               schema:
                 type: string
+        '429': { "$ref": "#/components/responses/QuotaExceeded" }
+        '503': { description: Dependency unavailable or at capacity }
+        '504': { description: Upstream deadline exceeded }
         default:
           description: Invalid input, authentication, ownership, availability or state
             error. Domain faults include a gRPC code and message.
@@ -108,6 +117,9 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Reservation"
+        '429': { "$ref": "#/components/responses/QuotaExceeded" }
+        '503': { description: Dependency unavailable or at capacity }
+        '504': { description: Upstream deadline exceeded }
         default:
           description: Invalid input, authentication, ownership, availability or state
             error. Domain faults include a gRPC code and message.
@@ -134,6 +146,9 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Reservation"
+        '429': { "$ref": "#/components/responses/QuotaExceeded" }
+        '503': { description: Dependency unavailable or at capacity }
+        '504': { description: Upstream deadline exceeded }
         default:
           description: Invalid input, authentication, ownership, availability or state
             error. Domain faults include a gRPC code and message.
@@ -160,6 +175,9 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Reservation"
+        '429': { "$ref": "#/components/responses/QuotaExceeded" }
+        '503': { description: Dependency unavailable or at capacity }
+        '504': { description: Upstream deadline exceeded }
         default:
           description: Invalid input, authentication, ownership, availability or state
             error. Domain faults include a gRPC code and message.
@@ -197,10 +215,20 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Reservation"
+        '429': { "$ref": "#/components/responses/QuotaExceeded" }
+        '503': { description: Dependency unavailable or at capacity }
+        '504': { description: Upstream deadline exceeded }
         default:
           description: Invalid input, authentication, ownership, availability or state
             error. Domain faults include a gRPC code and message.
 components:
+  responses:
+    QuotaExceeded:
+      description: Authenticated caller has exhausted the shared operation quota
+      headers:
+        Retry-After:
+          description: Seconds until another token is available
+          schema: { type: integer, minimum: 1 }
   securitySchemes:
     bearer:
       type: http

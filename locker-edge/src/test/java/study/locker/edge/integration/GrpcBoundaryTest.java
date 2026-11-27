@@ -1,13 +1,16 @@
-package study.locker.edge.adapter.grpc;
+package study.locker.edge.integration;
 
 import static org.assertj.core.api.Assertions.*;
 
 import io.grpc.*;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import org.junit.jupiter.api.Test;
 
 import study.locker.common.Rpc;
+import study.locker.common.RpcGuard;
+import study.locker.edge.adapter.grpc.GrpcLockerOperations;
 import study.locker.edge.application.GatewayFailure;
 import study.locker.security.RpcIdentity;
 import study.locker.wire.*;
@@ -46,7 +49,23 @@ class GrpcBoundaryTest {
                         capture);
         var channel = Rpc.channel("127.0.0.1:" + server.getPort());
         try {
-            var gateway = new GrpcLockerOperations(channel, Duration.ofMillis(1250));
+            var gateway =
+                    new GrpcLockerOperations(
+                            channel,
+                            new RpcGuard(
+                                    "reservations",
+                                    Duration.ofMillis(1250),
+                                    new RpcGuard.Settings(
+                                            8,
+                                            20,
+                                            10,
+                                            50,
+                                            Duration.ofSeconds(10),
+                                            2,
+                                            Duration.ofMillis(10),
+                                            true),
+                                    8,
+                                    new SimpleMeterRegistry()));
             String actor = "fixture";
             assertThatThrownBy(() -> gateway.get(actor, "offline"))
                     .isInstanceOfSatisfying(

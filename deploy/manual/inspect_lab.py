@@ -41,6 +41,7 @@ DELIVERIES = {
     "retried": "Delivery retry",
     "failed": "Delivery failed",
     "retry_failed": "Retry failed",
+    "waiting_for_dependency": "Waiting for delivery destination",
     "dead_lettered": "Dead-lettered",
     "dead_letter_failed": "Dead-letter failed",
 }
@@ -79,6 +80,10 @@ def observed_steps(service, span):
             target = "directory" if service == "reservations" else "reservations"
             method = fields.get("rpc.method", span["name"]).split("/")[-1]
             yield step(service, target, "gRPC · " + method)
+    elif service in GATEWAYS and fields.get(
+        "db.system.name", fields.get("db.system")
+    ) in {"redis", "valkey"}:
+        yield step(service, "valkey", "Check caller quota")
     elif fields.get(
         "db.system.name", fields.get("db.system")
     ) == "postgresql" and service in {"reservations", "directory"}:

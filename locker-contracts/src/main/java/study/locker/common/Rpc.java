@@ -7,8 +7,7 @@ import java.io.IOException;
 import java.util.function.Supplier;
 
 public final class Rpc {
-    private Rpc() {
-    }
+    private Rpc() {}
 
     public static Server serve(int port, BindableService service, ServerInterceptor... interceptors)
             throws IOException {
@@ -19,7 +18,7 @@ public final class Rpc {
     }
 
     public static ManagedChannel channel(String address) {
-        return ManagedChannelBuilder.forTarget(address).usePlaintext().build();
+        return ManagedChannelBuilder.forTarget(address).usePlaintext().disableRetry().build();
     }
 
     public static <T> void reply(StreamObserver<T> observer, Supplier<T> call) {

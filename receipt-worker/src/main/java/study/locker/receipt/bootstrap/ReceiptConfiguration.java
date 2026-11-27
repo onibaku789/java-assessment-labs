@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.*;
 
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.retries.StandardRetryStrategy;
 import software.amazon.awssdk.services.s3.S3Client;
 
 import study.locker.delivery.*;
@@ -14,6 +15,7 @@ import study.locker.receipt.domain.model.Receipt;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.Objects;
 
 @Configuration(proxyBeanMethods = false)
@@ -22,10 +24,18 @@ class ReceiptConfiguration {
     @Bean(destroyMethod = "close")
     S3Client storage(
             @Value("${locker.storage:http://objects:9090}") URI address,
-            @Value("${aws.region:us-east-1}") String region) {
+            @Value("${aws.region:us-east-1}") String region,
+            @Value("${locker.receipts.timeout:5s}") Duration timeout) {
         return S3Client.builder()
                 .endpointOverride(address)
                 .region(Region.of(region))
+                .overrideConfiguration(
+                        c ->
+                                c.apiCallTimeout(timeout)
+                                        .retryStrategy(
+                                                StandardRetryStrategy.builder()
+                                                        .maxAttempts(1)
+                                                        .build()))
                 .forcePathStyle(true)
                 .build();
     }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CheckStyle-IDEA" serialisationVersion="2">
+    <checkstyleVersion>14.4.0</checkstyleVersion>
+    <scanScope>JavaOnlyWithTests</scanScope>
+    <option name="activeLocationIds">
+      <option value="locker-complexity" />
+    </option>
+    <option name="locations">
+      <list>
+        <ConfigurationLocation id="locker-complexity" type="PROJECT_RELATIVE" scope="All" description="Locker Java complexity">$PROJECT_DIR$/config/checkstyle/complexity.xml</ConfigurationLocation>
+      </list>
+    </option>
+  </component>
+</project>

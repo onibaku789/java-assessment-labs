@@ -18,14 +18,20 @@ import java.time.Clock;
 @Import(DeliveryConfig.class)
 class NotificationConfiguration {
     @Bean
+    Clock clock() {
+        return Clock.systemUTC();
+    }
+
+    @Bean
     DeliverPickupNotification delivery(
+            Clock clock,
             JavaMailSender sender,
             @Value("${locker.secret:/run/locker/pickup.key}") String path,
             @Value("${locker.mail.from:lockers@example.test}") String from)
             throws IOException {
         var secrets = new PickupSecrets(Files.readString(Path.of(path)));
         return new DeliverPickupNotification(
-                Clock.systemUTC(), secrets::open, new SmtpPickupMail(sender, from));
+                clock, secrets::open, new SmtpPickupMail(sender, from));
     }
 
     @Bean

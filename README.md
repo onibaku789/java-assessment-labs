@@ -70,7 +70,7 @@ Reservations snapshots the expiry and failure limit on deposit and reissue. Chan
 | `LOCKER_OUTBOX_POLL_INTERVAL` | `300ms` | Reservations, delay after the previous relay run ends. Minimum 1 ms. |
 | `LOCKER_OUTBOX_BATCH_SIZE` | `50` | Reservations, maximum pending events read in sequence per relay transaction. Positive integer. |
 | `LOCKER_OUTBOX_ACK_TIMEOUT` | `12s` | Reservations, maximum wait for the Kafka send acknowledgement per event. The relay retains an unacknowledged row for retry. |
-| `LOCKER_DELIVERY_RETRY_RETRIES` / `LOCKER_DELIVERY_RETRY_DELAY` | `3` / `500ms` | Both workers, retries after the initial delivery and delay between attempts. Set retries to `0` for one delivery attempt. |
+| `LOCKER_DELIVERY_RETRY_RETRIES` / `LOCKER_DELIVERY_RETRY_DELAY` | `3` / `500ms` | Both workers, short retries and their delay during a destination outage. With zero short retries, the first failure goes straight to the recovery interval. |
 | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | Reservations and both workers, Kafka broker addresses. |
 | `LOCKER_KAFKA_MAX_BLOCK_MS` / `LOCKER_KAFKA_DELIVERY_TIMEOUT_MS` / `LOCKER_KAFKA_REQUEST_TIMEOUT_MS` | `3000` / `10000` / `3000` | Reservations producer, maximum blocking time in `send`, delivery deadline and broker request timeout in milliseconds. |
 | `DIRECTORY_DB_POOL_SIZE` / `RESERVATIONS_DB_POOL_SIZE` | `8` each | Compose maximum JDBC connections for each service. In Helm use `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE` in the corresponding service. |
@@ -154,6 +154,18 @@ To finish over SOAP, post this envelope to `/soap/lockers` with the customer bea
 
 Reads require `locker.read`. Customers use `locker.reserve` and a verified email to reserve. Only the owner can cancel, reissue or collect. Couriers use `locker.deposit` to deposit and can inspect reservations with read access. Each new command takes a UUID. Reuse that UUID and the same input when retrying the same command. The service returns its original result even across gateways. REST takes the UUID in `Idempotency-Key`. GraphQL and SOAP take `requestId`.
 
+## Java quality checks
+
+Run the complexity checks across all modules with the Maven wrapper.
+
+```sh
+./mvnw -Dtest=ComplexityTest,ComplexityLimitsTest test
+```
+
+The same JUnit checks run during `./mvnw clean verify`. They cover handwritten Java in production and tests, including the shared architecture tests. The limits are 7 for cyclomatic complexity, 15 for class fan-out, and 30 statements per method or 150 per type under JavaNCSS. The responsibility review links each declaration to its source and explains where independent requirements meet. [Shared Checkstyle rules](config/checkstyle/complexity.xml) · [Responsibility review](docs/responsibilities/README.md)
+
+In IntelliJ IDEA, open a Java file and use **Code → Reformat Code** (⌥⌘L on macOS). The project scheme uses four spaces and a 120-column margin, and wraps long calls and declarations as needed. For complexity feedback in the editor, the optional CheckStyle-IDEA plugin uses the same rules and engine as Maven. [Project formatter](.idea/codeStyles/Project.xml) · [CheckStyle-IDEA configuration](.idea/checkstyle-idea.xml)
+
 ## Where the work happens
 
 ```mermaid
@@ -161,6 +173,7 @@ flowchart LR
     R[REST] -->|gRPC| B[Reservations]
     G[GraphQL] -->|gRPC| B
     S[SOAP] -->|gRPC| B
+    R & G & S -->|Caller quota| V[(Valkey)]
     B -->|gRPC| D[Locker directory]
     D --> DC[(Directory schema)]
     B --> DB[(Reservations and outbox)]
@@ -198,7 +211,33 @@ State changes and outbox rows commit together. The relay publishes with the rese
 
 The default pickup policy expires a code after 15 minutes and locks it after five failed attempts. Reissue resets the counter and invalidates the old code. PostgreSQL stores a keyed verifier. The mail job carries an AES-GCM envelope. Public responses and audit receipts omit the code. SMTP delivery is at least once. A crash after SMTP accepts a message can cause a duplicate email with the same event identity.
 
-Both workers validate decoded version-1 events before delivery. An invalid field sends the original record directly to the source topic plus `.dlt`. Validation diagnostics identify the fields. Malformed JSON and transient delivery failures follow the existing retry schedule before dead-lettering. For a receipt conflict, compare the dead-letter event with the receipt at the event’s key before replay. For expired pickup mail, request a fresh code. Kafka and storage use one instance each in the local lab.
+Both workers validate decoded version-1 events before delivery. An invalid field sends the original record directly to the source topic plus `.dlt`. Validation diagnostics identify the fields. Malformed JSON, conflicting receipts and permanently rejected recipients go directly to the dead-letter topic. An unavailable destination pauses the listener with its offset pending. For a receipt conflict, compare the dead-letter event with the receipt at the event’s key before replay. For expired pickup mail, request a fresh code. Kafka and storage use one instance each in the local lab.
+
+### Resilience and recovery
+
+**Lost reply.** Each gateway charges the caller once per business operation. It can replay a read or a command carrying a valid request UUID once on a transient gRPC `UNAVAILABLE`, reusing the caller, UUID and payload. Both attempts and the jittered backoff share one deadline. Directory receives one attempt per incoming request. A committed reservation or a failed pickup attempt is recovered from the command journal on replay.
+
+**Unavailable or busy dependency.** A semaphore limits concurrent outbound calls per service instance. A full semaphore rejects immediately. Each circuit breaker measures its own dependency over a count-based window. Directory-origin failures carry internal metadata so a Directory outage leaves reservation lookups available. The REST API returns 503 for dependency unavailability or saturation and 504 for an expired deadline. GraphQL exposes the gRPC code in `errors[].extensions.code`, and SOAP returns it in the fault detail.
+
+**Caller quota.** All gateways and replicas use Bucket4j and Valkey to share one token bucket per authenticated issuer and subject. Each business field in a GraphQL query costs one token. On exhaustion, REST returns 429 and a `Retry-After` header in seconds. GraphQL and SOAP return `RESOURCE_EXHAUSTED`. The quota excludes health probes and internal retries. If Valkey times out, each gateway switches to a smaller local bucket until connectivity returns. During fallback the total allowance depends on the number of replicas. Quota buckets are ephemeral. Restarting Valkey or changing a shared budget starts a fresh bucket.
+
+**Delivery outage.** S3 gets one SDK attempt per delivery and SMTP has bounded connect, read and write timeouts. Spring Kafka owns redelivery. After the short retries, the listener pauses between probes while Kafka retains its offset. Other partitions assigned to that listener can wait with it. The other worker runs independently. On recovery the receipt worker resumes conditional writes and the mail worker checks the code's expiry again. The outbox retains unacknowledged Kafka publications with their original event IDs.
+
+| Environment setting | Lab default | Effect |
+| --- | --- | --- |
+| `LOCKER_GATEWAY_CAPACITY` / `LOCKER_DIRECTORY_CAPACITY` | 8 / 4 | Concurrent calls per gateway to Reservations and per Reservations instance to Directory. In Helm set `LOCKER_RPC_CAPACITY` on the caller. |
+| `LOCKER_RPC_WINDOW` / `LOCKER_RPC_MINIMUM` / `LOCKER_RPC_THRESHOLD` | 20 / 10 / 50 | Window size, minimum measured calls, and failure percentage to open a breaker. |
+| `LOCKER_RPC_OPEN` / `LOCKER_RPC_PROBES` | 10s / 2 | Open interval and number of half-open probes. |
+| `LOCKER_RPC_RETRY` / `LOCKER_RPC_BACKOFF` | true / 100ms | Enable gateway replay and set its base delay. Jitter ranges from half to one and a half times this delay. |
+| `LOCKER_QUOTA_URI` / `LOCKER_QUOTA_TIMEOUT` | redis://valkey:6379 / 100ms | Shared store address and check timeout. |
+| `LOCKER_QUOTA_RATE` / `LOCKER_QUOTA_BURST` | 120 / 60 | Tokens replenished per minute and maximum accumulated tokens per caller. Set the same values on each gateway. |
+| `LOCKER_QUOTA_LOCALRATE` / `LOCKER_QUOTA_LOCALBURST` / `LOCKER_QUOTA_CACHESIZE` | 20 / 10 / 10000 | Local fallback rate per minute, burst and maximum cached identities per gateway. |
+| `LOCKER_DELIVERY_RETRY_PROBE` | 10s | Pause between destination recovery attempts after short retries are exhausted. |
+| `LOCKER_RECEIPTS_TIMEOUT` / `SPRING_MAIL_PROPERTIES_MAIL_SMTP_WRITETIMEOUT` | 5s / 5000 ms | Total S3 API-call timeout and SMTP write timeout. |
+
+#### Run the local outage drill
+
+Start `./scripts/manual-lab up`, then run **`./scripts/manual-lab resilience-drill`** with one free compartment. The drill discards a reservation reply, replays the command, stops Directory, pauses S3 and pauses Valkey in turn. It checks that the booking remains readable, its cancellation receipt catches up, and quota enforcement recovers. It restores the affected containers on exit. In Grafana's Locker overview, the breaker states are 0 closed, 1 half-open and 2 open. Follow the gRPC rejections, worker delivery outcomes, consumer lag and quota fallback alongside the terminal output.
 
 ## Tests and operating exercises
 
@@ -225,7 +264,7 @@ For the rollout drill, the REST CPU target is 45% of its 100 millicore request, 
 | --- | --- |
 | 1 | Persist a reservation and race eight callers for one compartment. Follow the unique-index and idempotency assertions in [ReservationBookIT](reservation-service/src/test/java/study/locker/reservation/integration/ReservationBookIT.java). |
 | 2 | Compare owner and courier permissions, JWT claims and an allowed and denied browser preflight in [LockerJourneyIT](locker-verification/src/test/java/study/locker/verification/LockerJourneyIT.java). |
-| 3 | Follow one reservation across all three public contracts. Inspect gRPC caller propagation, an unavailable service and a stalled lookup in [GrpcBoundaryTest](locker-edge/src/test/java/study/locker/edge/adapter/grpc/GrpcBoundaryTest.java). |
+| 3 | Follow one reservation across all three public contracts. Inspect gRPC caller propagation, an unavailable service and a stalled lookup in [GrpcBoundaryTest](locker-edge/src/test/java/study/locker/edge/integration/GrpcBoundaryTest.java). |
 | 4 | Reproduce a broker outage and lost commit in the reservation suite. Verify duplicate events and dead-letter recovery with Kafka and S3 in [ReceiptDeliveryIT](receipt-worker/src/test/java/study/locker/receipt/integration/ReceiptDeliveryIT.java). |
 | 5 | Back up receipts, repeat the restore, and detect a damaged copy in the cross-protocol journey. Use [ReceiptArchive](locker-verification/src/main/java/study/locker/verification/ReceiptArchive.java) on a completed reservation. |
 | 6 | Inspect startup, readiness and liveness probes in the [Helm deployment](deploy/locker/templates/apps.yaml). Observe the unready replacement and check which pods receive traffic. |

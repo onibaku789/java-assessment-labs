@@ -253,6 +253,138 @@
         "enableLogDetails": true,
         "sortOrder": "Descending"
       }
+    },
+    {
+      "id": 8,
+      "title": "Circuit breaker state · 0 closed, 1 probing, 2 open",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "locker-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "h": 7,
+        "w": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(service,dependency) (locker_rpc_breaker_state)",
+          "legendFormat": "{{service}} → {{dependency}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "locker-prom"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Active outbound gRPC calls",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "locker-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "h": 7,
+        "w": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(service,dependency) (locker_rpc_inflight)",
+          "legendFormat": "{{service}} → {{dependency}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "locker-prom"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "gRPC retries and refused calls",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "locker-prom"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "h": 7,
+        "w": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (__name__,service) ({__name__=~\"locker_rpc_(retries|rejected)_total\"})",
+          "legendFormat": "{{service}} {{__name__}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "locker-prom"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Caller quota fallback and rejections",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "locker-prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "h": 7,
+        "w": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(service,outcome) (locker_quota_events_total)",
+          "legendFormat": "{{service}} {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "locker-prom"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      }
     }
   ]
 }

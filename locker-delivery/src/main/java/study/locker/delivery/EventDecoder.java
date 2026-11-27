@@ -4,6 +4,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.support.converter.MessagingMessageConverter;
 
 import tools.jackson.core.exc.InputCoercionException;
+import tools.jackson.core.exc.StreamReadException;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.MapperFeature;
 import tools.jackson.databind.ObjectMapper;
@@ -44,13 +45,9 @@ public class EventDecoder extends MessagingMessageConverter {
     }
 
     public <T> T decode(String payload, Class<T> type) {
-        // Finish parsing before classifying field errors. Syntax errors use the existing recovery
-        // path.
-        var node = json.readTree(payload);
-        if (node == null || node.isMissingNode())
-            throw new IllegalArgumentException("Empty event payload");
-        if (!node.isObject()) throw new InvalidEventFields("payload");
         try {
+            var node = json.readTree(payload);
+            if (node == null || !node.isObject()) throw new InvalidEventFields("payload");
             return json.treeToValue(node, type);
         } catch (MismatchedInputException | InputCoercionException invalid) {
             String field =
@@ -58,6 +55,8 @@ public class EventDecoder extends MessagingMessageConverter {
                             ? null
                             : invalid.getPath().getFirst().getPropertyName();
             throw new InvalidEventFields(field == null ? "payload" : field);
+        } catch (StreamReadException invalid) {
+            throw new InvalidEventFields("payload");
         }
     }
 }
