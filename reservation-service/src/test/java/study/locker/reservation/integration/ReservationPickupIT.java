@@ -1,6 +1,8 @@
 package study.locker.reservation.integration;
 
-import static org.assertj.core.api.Assertions.*;
+import static io.grpc.Status.Code.FAILED_PRECONDITION;
+import static org.assertj.core.api.Assertions.assertThat;
+import static study.locker.reservation.integration.GrpcFailureAssert.assertThatGrpcFailure;
 
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,18 +24,19 @@ class ReservationPickupIT extends ReservationFixture {
                 ReservationTestBeans.now.get().plusSeconds(45));
         ReservationTestBeans.now.set(ReservationTestBeans.now.get().plusSeconds(45));
         Command expired = cmd(id).toBuilder().setCode(old).build();
-        assertThatThrownBy(() -> client(customer).collect(expired)).hasMessageContaining("expired");
+        assertThatGrpcFailure(() -> client(customer).collect(expired))
+                .hasCode(FAILED_PRECONDITION)
+                .hasDescriptionContaining("expired");
         client(customer).reissue(cmd(id));
         String fresh = lastCode();
-        assertThatThrownBy(
-                () -> client(customer).collect(cmd(id).toBuilder().setCode(old).build())).hasMessageContaining(
-                "Invalid pickup code");
+        assertThatGrpcFailure(() -> client(customer).collect(cmd(id).toBuilder().setCode(old).build()))
+                .hasCode(FAILED_PRECONDITION)
+                .hasDescriptionContaining("Invalid pickup code");
         var collect = cmd(id).toBuilder().setCode(fresh).build();
         assertThat(client(customer).collect(collect).getState()).isEqualTo("COLLECTED");
         assertThat(client(customer).collect(collect).getState()).isEqualTo("COLLECTED");
-        assertThatThrownBy(
-                () -> client(customer).collect(cmd(id).toBuilder().setCode(fresh).build())).hasMessageContaining(
-                "FAILED_PRECONDITION");
+        assertThatGrpcFailure(() -> client(customer).collect(cmd(id).toBuilder().setCode(fresh).build()))
+                .hasCode(FAILED_PRECONDITION);
         assertThat(reserve().getState()).isEqualTo("RESERVED");
     }
 
@@ -41,14 +44,20 @@ class ReservationPickupIT extends ReservationFixture {
     void repeatedBadRequestCountsOnceAndConfiguredAttemptsLockTheCode() {
         String id = reserve().getId(), code = deposit(id);
         Command bad = cmd(id).toBuilder().setCode("wrong").build();
-        for (int i = 0; i < 6; i++)
-            assertThatThrownBy(() -> client(customer).collect(bad)).hasMessageContaining("Invalid pickup code");
+        for (int i = 0; i < 6; i++) {
+            assertThatGrpcFailure(() -> client(customer).collect(bad))
+                    .hasCode(FAILED_PRECONDITION)
+                    .hasDescriptionContaining("Invalid pickup code");
+        }
         assertThat(db.sql("select attempts from booking").query(Integer.class).single()).isOne();
-        for (int i = 1; i < 3; i++)
-            assertThatThrownBy(() -> client(customer).collect(cmd(id))).hasMessageContaining("Invalid pickup code");
-        assertThatThrownBy(
-                () -> client(customer).collect(cmd(id).toBuilder().setCode(code).build())).hasMessageContaining(
-                "locked");
+        for (int i = 1; i < 3; i++) {
+            assertThatGrpcFailure(() -> client(customer).collect(cmd(id)))
+                    .hasCode(FAILED_PRECONDITION)
+                    .hasDescriptionContaining("Invalid pickup code");
+        }
+        assertThatGrpcFailure(() -> client(customer).collect(cmd(id).toBuilder().setCode(code).build()))
+                .hasCode(FAILED_PRECONDITION)
+                .hasDescriptionContaining("locked");
     }
 
     @Test
@@ -61,7 +70,9 @@ class ReservationPickupIT extends ReservationFixture {
         assertThat(replay.getId()).isEqualTo(id);
         assertThat(db.sql("select pickup_max_attempts from booking").query(Integer.class).single()).isEqualTo(5);
         for (int i = 0; i < 4; i++) {
-            assertThatThrownBy(() -> client(customer).collect(cmd(id))).hasMessageContaining("Invalid pickup code");
+            assertThatGrpcFailure(() -> client(customer).collect(cmd(id)))
+                    .hasCode(FAILED_PRECONDITION)
+                    .hasDescriptionContaining("Invalid pickup code");
         }
         ReservationTestBeans.now.set(ReservationTestBeans.now.get().plusSeconds(899));
         assertThat(client(customer).collect(cmd(id).toBuilder().setCode("01234567").build()).getState()).isEqualTo(

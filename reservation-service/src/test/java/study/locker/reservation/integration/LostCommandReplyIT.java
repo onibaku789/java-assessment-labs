@@ -1,6 +1,8 @@
 package study.locker.reservation.integration;
 
-import static org.assertj.core.api.Assertions.*;
+import static io.grpc.Status.Code.FAILED_PRECONDITION;
+import static org.assertj.core.api.Assertions.assertThat;
+import static study.locker.reservation.integration.GrpcFailureAssert.assertThatGrpcFailure;
 
 import io.grpc.*;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -54,9 +56,9 @@ class LostCommandReplyIT extends ReservationFixture {
             assertRowCounts(1, 1, 1);
             deposit(booking.getId());
             var reject = cmd(booking.getId()).toBuilder().setCode("wrong").build();
-            assertThatThrownBy(
-                    () -> guard.call(true, limit -> gateway.withDeadline(limit).collect(reject))).hasMessageContaining(
-                    "Invalid pickup code");
+            assertThatGrpcFailure(() -> guard.call(true, limit -> gateway.withDeadline(limit).collect(reject)))
+                    .hasCode(FAILED_PRECONDITION)
+                    .hasDescriptionContaining("Invalid pickup code");
             assertThat(db.sql("select attempts from booking").query(Integer.class).single()).isOne();
             assertThat(db.sql("select count(*) from command_result").query(Integer.class).single()).isEqualTo(3);
             assertThat(metrics.get("locker.rpc.retries").counter().count()).isEqualTo(2);

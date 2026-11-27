@@ -1,6 +1,8 @@
 package study.locker.reservation.integration;
 
-import static org.assertj.core.api.Assertions.*;
+import static io.grpc.Status.Code.INTERNAL;
+import static org.assertj.core.api.Assertions.assertThat;
+import static study.locker.reservation.integration.GrpcFailureAssert.assertThatGrpcFailure;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -23,7 +25,7 @@ class ReservationCommitIT extends ReservationFixture {
             db.sql("alter table command_result add constraint test_commit_failure foreign" +
                     " key (request_id) references booking(id) deferrable initially" + " deferred").update();
             try {
-                assertThatThrownBy(() -> client(customer).reserve(request)).hasMessageContaining("INTERNAL");
+                assertThatGrpcFailure(() -> client(customer).reserve(request)).hasCode(INTERNAL);
                 assertRowCounts(0, 0, 0);
                 assertThat(capture.list).filteredOn(e -> e.getMessage().equals("reservation_command")).isEmpty();
             } finally {

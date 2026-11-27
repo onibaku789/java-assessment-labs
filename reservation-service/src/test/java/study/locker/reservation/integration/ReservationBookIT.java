@@ -1,6 +1,8 @@
 package study.locker.reservation.integration;
 
+import static io.grpc.Status.Code.ALREADY_EXISTS;
 import static org.assertj.core.api.Assertions.*;
+import static study.locker.reservation.integration.GrpcFailureAssert.assertThatGrpcFailure;
 
 import io.grpc.*;
 import org.junit.jupiter.api.*;
@@ -26,9 +28,8 @@ class ReservationBookIT extends ReservationFixture {
         Booking before = client(customer).reserve(command);
         client(customer).cancel(cmd(before.getId()));
         assertThat(client(customer).reserve(command)).isEqualTo(before);
-        assertThatThrownBy(
-                () -> client(customer).reserve(command.toBuilder().setId("CENTRAL-L1").build())).isInstanceOf(
-                StatusRuntimeException.class).hasMessageContaining("ALREADY_EXISTS");
+        assertThatGrpcFailure(() -> client(customer).reserve(command.toBuilder().setId("CENTRAL-L1").build()))
+                .hasCode(ALREADY_EXISTS);
         assertThat(reserve().getId()).isNotEqualTo(before.getId());
     }
 
@@ -65,7 +66,7 @@ class ReservationBookIT extends ReservationFixture {
             start.countDown();
             var results = new ArrayList<Status.Code>();
             for (var future : futures) results.add(future.get(10, TimeUnit.SECONDS));
-            assertThat(results).containsOnly(Status.Code.OK, Status.Code.ALREADY_EXISTS);
+            assertThat(results).containsOnly(Status.Code.OK, ALREADY_EXISTS);
             assertThat(Collections.frequency(results, Status.Code.OK)).isOne();
             assertThat(db.sql("select count(*) from outbox").query(Integer.class).single()).isOne();
         }
