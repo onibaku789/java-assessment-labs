@@ -6,17 +6,35 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
-        <module name="shipment-worker" />
-        <module name="parcel-api" />
-        <module name="release-lab" />
+        <module name="locker-graphql-api" />
+        <module name="locker-soap-api" />
+        <module name="locker-contracts" />
+        <module name="receipt-worker" />
+        <module name="reservation-service" />
+        <module name="locker-rest-api" />
+        <module name="locker-security" />
+        <module name="locker-delivery" />
+        <module name="locker-directory-service" />
+        <module name="notification-worker" />
+        <module name="locker-edge" />
+        <module name="locker-verification" />
       </profile>
     </annotationProcessing>
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
-      <module name="parcel-api" options="-parameters" />
-      <module name="release-lab" options="-parameters" />
-      <module name="shipment-worker" options="-parameters" />
+      <module name="locker-contracts" options="-parameters" />
+      <module name="locker-delivery" options="-parameters" />
+      <module name="locker-directory-service" options="-parameters" />
+      <module name="locker-edge" options="-parameters" />
+      <module name="locker-graphql-api" options="-parameters" />
+      <module name="locker-rest-api" options="-parameters" />
+      <module name="locker-security" options="-parameters" />
+      <module name="locker-soap-api" options="-parameters" />
+      <module name="locker-verification" options="-parameters" />
+      <module name="notification-worker" options="-parameters" />
+      <module name="receipt-worker" options="-parameters" />
+      <module name="reservation-service" options="-parameters" />
     </option>
   </component>
 </project>

@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: locker-db-init}
+data:
+  01-roles.sh: |
+{{ .Files.Get "files/01-roles.sh" | indent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres}
+spec:
+  selector: {app: postgres}
+  ports:
+    - {name: db, port: 5432, targetPort: 5432}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: postgres}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+        - name: postgres
+          image: postgres:19.0-alpine
+          env:
+            - {name: POSTGRES_DB, value: "lockers"}
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: locker-db, key: POSTGRES_PASSWORD}}}
+            - {name: DIRECTORY_PASSWORD, valueFrom: {secretKeyRef: {name: locker-db, key: DIRECTORY_PASSWORD}}}
+            - {name: RESERVATIONS_PASSWORD, valueFrom: {secretKeyRef: {name: locker-db, key: RESERVATIONS_PASSWORD}}}
+          readinessProbe: {tcpSocket: {port: 5432}, periodSeconds: 3}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d}
+      volumes:
+        - {name: init, configMap: {name: locker-db-init}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: kafka}
+spec:
+  publishNotReadyAddresses: true
+  selector: {app: kafka}
+  ports:
+    - {name: broker, port: 9092, targetPort: 9092}
+    - {name: controller, port: 9093, targetPort: 9093}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: kafka}
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector: {matchLabels: {app: kafka}}
+  template:
+    metadata: {labels: {app: kafka}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: kafka
+          image: apache/kafka:4.2.2
+          env:
+            - {name: KAFKA_NODE_ID, value: "1"}
+            - {name: KAFKA_PROCESS_ROLES, value: "broker,controller"}
+            - {name: KAFKA_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093"}
+            - {name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092"}
+            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER"}
+            - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@kafka:9093"}
+            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"}
+            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1"}
+            - {name: KAFKA_NUM_PARTITIONS, value: "3"}
+            - {name: KAFKA_LOG_DIRS, value: "/var/lib/kafka/data"}
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms128m -Xmx256m"}
+            - {name: CLUSTER_ID, value: "bG9ja2Vycy1sYWItMDAwMQ"}
+          readinessProbe: {tcpSocket: {port: 9092}, periodSeconds: 3}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/kafka/data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: objects}
+spec:
+  selector: {app: objects}
+  ports:
+    - {name: s3, port: 9090, targetPort: 9090}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: objects}
+spec:
+  serviceName: objects
+  replicas: 1
+  selector: {matchLabels: {app: objects}}
+  template:
+    metadata: {labels: {app: objects}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: objects
+          image: adobe/s3mock:5.2.3
+          env:
+            - {name: COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS, value: {{ .Values.apps.receipts.env.LOCKER_RECEIPTS_BUCKET | quote }}}
+            - {name: COM_ADOBE_TESTING_S3MOCK_STORE_ROOT, value: "/data"}
+            - {name: COM_ADOBE_TESTING_S3MOCK_STORE_RETAIN_FILES_ON_EXIT, value: "true"}
+          readinessProbe: {tcpSocket: {port: 9090}, periodSeconds: 3}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mailpit}
+spec:
+  selector: {app: mailpit}
+  ports:
+    - {name: smtp, port: 1025, targetPort: 1025}
+    - {name: http, port: 8025, targetPort: 8025}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: mailpit}
+spec:
+  serviceName: mailpit
+  replicas: 1
+  selector: {matchLabels: {app: mailpit}}
+  template:
+    metadata: {labels: {app: mailpit}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.27.4
+          env:
+            - {name: MP_DATABASE, value: "/data/mailpit.db"}
+          readinessProbe: {tcpSocket: {port: 1025}, periodSeconds: 3}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}

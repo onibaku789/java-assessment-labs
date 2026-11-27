@@ -1,0 +1,209 @@
+name: pickup-lockers
+x-host-tools:
+  LOCKER_S3_ENDPOINT: "${LOCKER_S3_ENDPOINT:-http://127.0.0.1:19090}"
+services:
+  postgres:
+    image: postgres:19.0-alpine
+    environment:
+      POSTGRES_DB: lockers
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/compose}
+      DIRECTORY_PASSWORD: ${DIRECTORY_PASSWORD:?run scripts/compose}
+      RESERVATIONS_PASSWORD: ${RESERVATIONS_PASSWORD:?run scripts/compose}
+    volumes:
+      - locker-db:/var/lib/postgresql
+      - ./deploy/locker/files/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -h 127.0.0.1 -U postgres -d lockers"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+  kafka:
+    image: apache/kafka:4.2.2
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+      CLUSTER_ID: "bG9ja2Vycy1sYWItMDAwMQ"
+    volumes:
+      - locker-kafka:/var/lib/kafka/data
+  mailpit:
+    image: axllent/mailpit:v1.27.4
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    volumes:
+      - locker-mail:/data
+    ports: ["127.0.0.1:${MAILPIT_PORT:-18025}:8025"]
+  storage-init:
+    image: alpine:3
+    user: "0"
+    command: ["chown", "1000:1000", "/data"]
+    volumes: [locker-objects:/data]
+  objects:
+    depends_on: {storage-init: {condition: service_completed_successfully}}
+    image: adobe/s3mock:5.2.3
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: "${LOCKER_RECEIPTS_BUCKET:-locker-audit}"
+      COM_ADOBE_TESTING_S3MOCK_STORE_ROOT: /data
+      COM_ADOBE_TESTING_S3MOCK_STORE_RETAIN_FILES_ON_EXIT: "true"
+    volumes:
+      - locker-objects:/data
+  directory:
+    image: locker/locker-directory-service:lab
+    build:
+      context: .
+      args: {MODULE: locker-directory-service}
+    restart: on-failure:5
+    environment:
+      LOCKER_GRPC_PORT: "${DIRECTORY_GRPC_PORT:-9090}"
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2"
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/lockers?currentSchema=directory"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "${DIRECTORY_DB_POOL_SIZE:-8}"
+      SPRING_DATASOURCE_USERNAME: "directory"
+      SPRING_DATASOURCE_PASSWORD: ${DIRECTORY_PASSWORD}
+    depends_on:
+      postgres: {condition: service_healthy}
+  reservations:
+    image: locker/reservation-service:lab
+    build:
+      context: .
+      args: {MODULE: reservation-service}
+    restart: on-failure:5
+    environment:
+      LOCKER_JWT_ISSUER: "${LOCKER_JWT_ISSUER:-urn:locker:lab}"
+      LOCKER_JWT_AUDIENCE: "${LOCKER_JWT_AUDIENCE:-locker-api}"
+      LOCKER_PICKUP_TTL: "${LOCKER_PICKUP_TTL:-15m}"
+      LOCKER_PICKUP_MAX_ATTEMPTS: "${LOCKER_PICKUP_MAX_ATTEMPTS:-5}"
+      LOCKER_DIRECTORY: "${LOCKER_DIRECTORY:-directory:${DIRECTORY_GRPC_PORT:-9090}}"
+      LOCKER_DIRECTORY_DEADLINE: "${LOCKER_DIRECTORY_DEADLINE:-2s}"
+      LOCKER_GRPC_PORT: "${RESERVATIONS_GRPC_PORT:-9090}"
+      LOCKER_OUTBOX_BATCH_SIZE: "${LOCKER_OUTBOX_BATCH_SIZE:-50}"
+      LOCKER_OUTBOX_ACK_TIMEOUT: "${LOCKER_OUTBOX_ACK_TIMEOUT:-12s}"
+      LOCKER_OUTBOX_POLL_INTERVAL: "${LOCKER_OUTBOX_POLL_INTERVAL:-300ms}"
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2"
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/lockers?currentSchema=reservations"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "${RESERVATIONS_DB_POOL_SIZE:-8}"
+      LOCKER_KAFKA_MAX_BLOCK_MS: "${LOCKER_KAFKA_MAX_BLOCK_MS:-3000}"
+      LOCKER_KAFKA_DELIVERY_TIMEOUT_MS: "${LOCKER_KAFKA_DELIVERY_TIMEOUT_MS:-10000}"
+      LOCKER_KAFKA_REQUEST_TIMEOUT_MS: "${LOCKER_KAFKA_REQUEST_TIMEOUT_MS:-3000}"
+      SPRING_DATASOURCE_USERNAME: "reservations"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "${SPRING_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
+      SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET: "earliest"
+      SPRING_KAFKA_CONSUMER_ENABLE_AUTO_COMMIT: "false"
+      SPRING_KAFKA_LISTENER_ACK_MODE: "record"
+      SPRING_DATASOURCE_PASSWORD: ${RESERVATIONS_PASSWORD}
+    depends_on:
+      postgres: {condition: service_healthy}
+    volumes:
+      - ./.lab/keys/public.pem:/run/locker/public.pem:ro
+      - ./.lab/keys/pickup.key:/run/locker/pickup.key:ro
+  rest:
+    image: locker/locker-rest-api:lab
+    build:
+      context: .
+      args: {MODULE: locker-rest-api}
+    restart: on-failure:5
+    environment:
+      LOCKER_JWT_ISSUER: "${LOCKER_JWT_ISSUER:-urn:locker:lab}"
+      LOCKER_JWT_AUDIENCE: "${LOCKER_JWT_AUDIENCE:-locker-api}"
+      LOCKER_RESERVATIONS: "${LOCKER_RESERVATIONS:-reservations:${RESERVATIONS_GRPC_PORT:-9090}}"
+      LOCKER_RESERVATIONS_DEADLINE: "${LOCKER_RESERVATIONS_DEADLINE:-4s}"
+      LOCKER_CORS_ORIGINS: "${LOCKER_CORS_ORIGINS:-http://localhost:18081,http://localhost:18082,http://localhost:18083}"
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2"
+    volumes:
+      - ./.lab/keys/public.pem:/run/locker/public.pem:ro
+    ports: ["127.0.0.1:18081:8080"]
+  graphql:
+    image: locker/locker-graphql-api:lab
+    build:
+      context: .
+      args: {MODULE: locker-graphql-api}
+    restart: on-failure:5
+    environment:
+      LOCKER_JWT_ISSUER: "${LOCKER_JWT_ISSUER:-urn:locker:lab}"
+      LOCKER_JWT_AUDIENCE: "${LOCKER_JWT_AUDIENCE:-locker-api}"
+      LOCKER_RESERVATIONS: "${LOCKER_RESERVATIONS:-reservations:${RESERVATIONS_GRPC_PORT:-9090}}"
+      LOCKER_RESERVATIONS_DEADLINE: "${LOCKER_RESERVATIONS_DEADLINE:-4s}"
+      LOCKER_CORS_ORIGINS: "${LOCKER_CORS_ORIGINS:-http://localhost:18081,http://localhost:18082,http://localhost:18083}"
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2"
+    volumes:
+      - ./.lab/keys/public.pem:/run/locker/public.pem:ro
+    ports: ["127.0.0.1:18082:8080"]
+  soap:
+    image: locker/locker-soap-api:lab
+    build:
+      context: .
+      args: {MODULE: locker-soap-api}
+    restart: on-failure:5
+    environment:
+      LOCKER_JWT_ISSUER: "${LOCKER_JWT_ISSUER:-urn:locker:lab}"
+      LOCKER_JWT_AUDIENCE: "${LOCKER_JWT_AUDIENCE:-locker-api}"
+      LOCKER_RESERVATIONS: "${LOCKER_RESERVATIONS:-reservations:${RESERVATIONS_GRPC_PORT:-9090}}"
+      LOCKER_RESERVATIONS_DEADLINE: "${LOCKER_RESERVATIONS_DEADLINE:-4s}"
+      LOCKER_CORS_ORIGINS: "${LOCKER_CORS_ORIGINS:-http://localhost:18081,http://localhost:18082,http://localhost:18083}"
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2"
+    volumes:
+      - ./.lab/keys/public.pem:/run/locker/public.pem:ro
+    ports: ["127.0.0.1:18083:8080"]
+  notifications:
+    image: locker/notification-worker:lab
+    build:
+      context: .
+      args: {MODULE: notification-worker}
+    restart: on-failure:5
+    environment:
+      LOCKER_DELIVERY_RETRY_DELAY: "${LOCKER_DELIVERY_RETRY_DELAY:-500ms}"
+      LOCKER_DELIVERY_RETRY_RETRIES: "${LOCKER_DELIVERY_RETRY_RETRIES:-3}"
+      LOCKER_MAIL_FROM: "${LOCKER_MAIL_FROM:-lockers@example.test}"
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "${SPRING_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
+      SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET: "earliest"
+      SPRING_KAFKA_CONSUMER_ENABLE_AUTO_COMMIT: "false"
+      SPRING_KAFKA_LISTENER_ACK_MODE: "record"
+      SPRING_MAIL_HOST: "${SPRING_MAIL_HOST:-mailpit}"
+      SPRING_MAIL_PORT: "${SPRING_MAIL_PORT:-1025}"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_TIMEOUT: "${SPRING_MAIL_PROPERTIES_MAIL_SMTP_TIMEOUT:-5000}"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_CONNECTIONTIMEOUT: "${SPRING_MAIL_PROPERTIES_MAIL_SMTP_CONNECTIONTIMEOUT:-5000}"
+    volumes:
+      - ./.lab/keys/pickup.key:/run/locker/pickup.key:ro
+  receipts:
+    image: locker/receipt-worker:lab
+    build:
+      context: .
+      args: {MODULE: receipt-worker}
+    restart: on-failure:5
+    environment:
+      LOCKER_DELIVERY_RETRY_DELAY: "${LOCKER_DELIVERY_RETRY_DELAY:-500ms}"
+      LOCKER_DELIVERY_RETRY_RETRIES: "${LOCKER_DELIVERY_RETRY_RETRIES:-3}"
+      LOCKER_RECEIPTS_BUCKET: "${LOCKER_RECEIPTS_BUCKET:-locker-audit}"
+      LOCKER_STORAGE: "${LOCKER_STORAGE:-http://objects:9090}"
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "${SPRING_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
+      SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET: "earliest"
+      SPRING_KAFKA_CONSUMER_ENABLE_AUTO_COMMIT: "false"
+      SPRING_KAFKA_LISTENER_ACK_MODE: "record"
+      AWS_ACCESS_KEY_ID: "lab"
+      AWS_SECRET_ACCESS_KEY: "lab"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+
+volumes:
+  locker-db: {}
+  locker-kafka: {}
+  locker-objects: {}
+  locker-mail: {}

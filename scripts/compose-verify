@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export COMPOSE_FILE=compose.yaml:deploy/verify.compose.yaml
+./scripts/compose up -d
+./scripts/with-stack-env ./mvnw -B -ntp -pl locker-verification -Dlocker.stack=true verify

@@ -1,0 +1,10 @@
+type Slot { id: ID!, site: String!, size: String! }
+type Reservation { id: ID!, compartmentId: ID!, state: String! }
+type Query { available(site: String, size: String): [Slot!]!, reservation(id: ID!): Reservation }
+type Mutation {
+  reserve(requestId: ID!, compartmentId: ID!): Reservation
+  cancel(requestId: ID!, id: ID!): Reservation
+  deposit(requestId: ID!, id: ID!): Reservation
+  reissue(requestId: ID!, id: ID!): Reservation
+  collect(requestId: ID!, id: ID!, code: String!): Reservation
+}

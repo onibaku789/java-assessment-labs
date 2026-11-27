@@ -1,0 +1,41 @@
+specification {
+  element service
+  element gateway { style { color secondary } }
+  element storage { style { shape storage; color muted } }
+}
+model {
+  browser = service 'Manual lab'
+  rest = gateway 'REST'
+  graphql = gateway 'GraphQL'
+  soap = gateway 'SOAP'
+  reservations = service 'Reservations'
+  directory = service 'Directory'
+  postgres = storage 'PostgreSQL'
+  relay = service 'Outbox relay'
+  kafka = storage 'Kafka'
+  notifications = service 'Notifications'
+  receipts = service 'Receipts'
+  mailpit = storage 'Mailpit'
+  objects = storage 'S3'
+  browser -> rest
+  browser -> graphql
+  browser -> soap
+  rest -> reservations
+  graphql -> reservations
+  soap -> reservations
+  reservations -> directory
+  reservations -> postgres
+  directory -> postgres
+  postgres -> relay
+  relay -> kafka
+  kafka -> notifications
+  kafka -> receipts
+  notifications -> mailpit
+  receipts -> objects
+}
+views {
+  view flow {
+    include *
+    autoLayout LeftRight
+  }
+}

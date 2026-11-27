@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$PWD/.lab/bin:$PATH" KUBECONFIG="$PWD/.lab/locker-kubeconfig"
+pids=()
+cleanup() { for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; wait || true; }
+trap cleanup EXIT
+for spec in rest:19081:8080 graphql:19082:8080 soap:19083:8080 mailpit:19025:8025 objects:20090:9090; do
+    IFS=: read -r service localport port <<<"$spec"
+    logfile=".lab/forward-$service.log"
+    kubectl -n lockers port-forward --address 127.0.0.1 "service/$service" "$localport:$port" >"$logfile" 2>&1 &
+    pid=$!
+    pids+=("$pid")
+    for attempt in {1..40}; do
+        grep -q 'Forwarding from' "$logfile" && break
+        kill -0 "$pid" 2>/dev/null || { cat "$logfile" >&2; exit 1; }
+        sleep 0.25
+    done
+    grep -q 'Forwarding from' "$logfile"
+done
+./mvnw -B -ntp -pl locker-verification -Dlocker.stack=true -Dlocker.portOffset=1000 verify

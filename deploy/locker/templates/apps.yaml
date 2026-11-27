@@ -1,0 +1,79 @@
+{{- range $name, $app := .Values.apps }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: {{ $name }}}
+spec:
+  {{- if not (and (eq $name "rest") $.Values.autoscale) }}
+  replicas: {{ if eq $name "rest" }}{{ $.Values.restReplicas }}{{ else }}1{{ end }}
+  {{- end }}
+  selector: {matchLabels: {app: {{ $name }}}}
+  template:
+    metadata: {labels: {app: {{ $name }}}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+        - name: app
+          image: "locker/{{ $app.module }}:{{ $.Values.imageTag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            {{- range $key,$value := $app.env }}
+            - {name: {{ $key }}, value: {{ $value | quote }}}
+            {{- end }}
+            {{- if has $name (list "directory" "reservations") }}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: {secretKeyRef: {name: locker-db, key: {{ upper $name }}_PASSWORD}}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: 8080}
+            {{- if has $name (list "directory" "reservations") }}
+            - {name: grpc, containerPort: {{ $app.env.LOCKER_GRPC_PORT }}}
+            {{- end }}
+          resources: {requests: {cpu: 100m, memory: 160Mi}, limits: {cpu: "1", memory: 512Mi}}
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          startupProbe: {httpGet: {port: http, path: /actuator/health/liveness}, periodSeconds: 2, failureThreshold: 90}
+          readinessProbe: {httpGet: {port: http, path: {{ if eq $name "rest" }}{{ $.Values.restReadinessPath }}{{ else }}/actuator/health/readiness{{ end }}}, periodSeconds: 2}
+          livenessProbe: {httpGet: {port: http, path: /actuator/health/liveness}, periodSeconds: 10}
+          {{- if has $name (list "rest" "graphql" "soap" "reservations" "notifications") }}
+          volumeMounts: [{name: keys, mountPath: /run/locker, readOnly: true}]
+      volumes:
+        - name: keys
+          secret:
+            secretName: locker-config
+            items:
+              {{- if ne $name "notifications" }}
+              - {key: public.pem, path: public.pem}
+              {{- end }}
+              {{- if has $name (list "reservations" "notifications") }}
+              - {key: pickup.key, path: pickup.key}
+              {{- end }}
+          {{- end }}
+{{- if has $name (list "rest" "graphql" "soap" "directory" "reservations") }}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: {{ $name }}}
+spec:
+  selector: {app: {{ $name }}}
+  ports:
+    {{- if has $name (list "directory" "reservations") }}
+    - {name: grpc, port: 9090, targetPort: grpc}
+    {{- else }}
+    - {name: http, port: 8080, targetPort: http}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.autoscale }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: rest}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: rest}
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 45}}
+{{- end }}

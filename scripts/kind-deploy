@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$PWD/.lab/bin:$PATH" KUBECONFIG="$PWD/.lab/locker-kubeconfig"
+name=lockers-lab
+./scripts/lab-keys
+if ! kind get clusters | grep -Fxq "$name"; then
+    node_image=${KIND_NODE_IMAGE:-locker-kind-node:v1.37.3}
+    if [[ -z "${KIND_NODE_IMAGE:-}" ]] && ! docker image inspect "$node_image" >/dev/null 2>&1; then
+        kind build node-image --type release v1.37.3 --image "$node_image"
+    fi
+    kind create cluster --name "$name" --image "$node_image" --kubeconfig "$KUBECONFIG" --wait 180s
+fi
+kind export kubeconfig --name "$name" --kubeconfig "$KUBECONFIG" >/dev/null
+./mvnw -B -ntp -DskipTests package
+docker compose --env-file .lab/keys/database.env build
+images=(locker/locker-directory-service:lab locker/reservation-service:lab locker/locker-rest-api:lab locker/locker-graphql-api:lab locker/locker-soap-api:lab locker/notification-worker:lab locker/receipt-worker:lab)
+tag=r$(docker image inspect --format '{{.Id}}' "${images[@]}" | shasum -a 256 | cut -c1-16)
+versioned=()
+for image in "${images[@]}"; do
+    dest="${image%:*}:$tag"
+    docker tag "$image" "$dest"
+    versioned+=("$dest")
+done
+infra=(postgres:19.0-alpine apache/kafka:4.2.2 adobe/s3mock:5.2.3 axllent/mailpit:v1.27.4)
+for image in "${infra[@]}"; do docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"; done
+# Import only the node's platform. Local Docker stores can omit other manifests in an image index.
+arch=$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.architecture}')
+for node in $(kind get nodes --name "$name"); do
+    docker image save --platform "linux/$arch" "${versioned[@]}" "${infra[@]}" |
+        docker exec -i "$node" ctr -n k8s.io images import --platform "linux/$arch" -
+done
+kubectl create namespace lockers --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n lockers create secret generic locker-db --from-env-file=.lab/keys/database.env --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n lockers create secret generic locker-config \
+    --from-file=.lab/keys/public.pem --from-file=.lab/keys/pickup.key --dry-run=client -o yaml | kubectl apply -f -
+helm upgrade --install lockers deploy/locker -n lockers --set-string imageTag="$tag" --wait --timeout 6m

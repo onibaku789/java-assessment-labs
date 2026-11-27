@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+./scripts/lab-keys
+if [[ "${1:-}" == up ]]; then
+    ./mvnw -B -ntp -DskipTests package
+    shift
+    set -- up --build "$@"
+fi
+env_files=(--env-file .lab/keys/database.env)
+if [[ -f .env ]]; then env_files=(--env-file .env "${env_files[@]}"); fi
+exec docker compose "${env_files[@]}" "$@"

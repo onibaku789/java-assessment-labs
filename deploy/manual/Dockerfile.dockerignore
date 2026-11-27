@@ -1,0 +1,4 @@
+**
+!scripts/token.py
+!deploy/manual/*.py
+!deploy/manual/web/**

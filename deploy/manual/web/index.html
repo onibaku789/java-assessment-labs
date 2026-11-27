@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Locker Lab · Guided journey</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/flow.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand"><i class="mark" aria-hidden="true"></i>Locker Lab</div>
+      <nav aria-label="Workspace">
+        <a class="current" href="#journey">Guided journey</a
+        ><a href="#flow-panel">Live flow</a><a href="#database">Database</a
+        ><a href="#activity">Request history</a>
+      </nav>
+      <div class="tools">
+        <h2>Lab tools</h2>
+        <a data-tool="mailpit" target="_blank" rel="noreferrer"
+          >Mailpit inbox <span>↗</span></a
+        ><a
+          data-tool="grafana"
+          target="_blank"
+          rel="noreferrer"
+          >Grafana dashboard <span>↗</span></a
+        >
+      </div>
+    </aside>
+    <main id="journey">
+      <header class="top">
+        <span>Workspace <b>/</b> Guided journey</span
+        ><span class="local"><i></i> Local lab</span>
+      </header>
+      <div class="canvas">
+        <h1>Guided locker journey</h1>
+        <p class="intro">
+          Reserve a compartment, deposit a parcel and collect it with an emailed
+          code.
+        </p>
+        <div class="grid">
+          <section class="card run">
+            <h2>Run an operation</h2>
+            <div class="stages" aria-label="Journey steps">
+              <button data-step="reserve">1 · Reserve</button
+              ><button data-step="deposit">2 · Deposit</button
+              ><button data-step="collect">3 · Collect</button>
+            </div>
+            <div class="pair">
+              <label
+                >Operation<select id="operation">
+                  <option value="available">Find available compartments</option>
+                  <option value="reserve" selected>Reserve compartment</option>
+                  <option value="get">Look up reservation</option>
+                  <option value="cancel">Cancel reservation</option>
+                  <option value="deposit">Deposit parcel</option>
+                  <option value="reissue">Reissue pickup code</option>
+                  <option value="collect">Collect parcel</option>
+                </select></label
+              >
+              <label
+                >Protocol<select id="protocol">
+                  <option>REST</option>
+                  <option>GraphQL</option>
+                  <option>SOAP</option>
+                </select></label
+              >
+            </div>
+            <fieldset>
+              <legend>Acting as</legend>
+              <div class="roles">
+                <label
+                  ><input type="radio" name="role" value="customer" checked />
+                  Customer</label
+                ><label
+                  ><input type="radio" name="role" value="courier" />
+                  Courier</label
+                >
+              </div>
+            </fieldset>
+            <section id="slots-panel">
+              <div class="section-title">
+                <h3>Available compartments</h3>
+                <button class="link" id="refresh">Refresh</button>
+              </div>
+              <div id="slots"></div>
+            </section>
+            <label id="booking-label" hidden
+              >Reservation ID<input
+                id="booking"
+                placeholder="Reservation UUID"
+                autocomplete="off"
+            /></label>
+            <label id="code-label" hidden
+              >Pickup code<input
+                id="pickup"
+                type="password"
+                inputmode="numeric"
+                maxlength="8"
+                autocomplete="off"
+                placeholder="8 digits from Mailpit"
+            /></label>
+            <p id="hint"></p>
+            <div class="actions">
+              <button id="execute" class="primary">Reserve compartment</button
+              ><button id="retry" disabled>Retry last command</button>
+            </div>
+            <p id="feedback" role="status" aria-live="polite"></p>
+          </section>
+          <section
+            id="flow-panel"
+            class="card live-card"
+            aria-labelledby="flow-title"
+          >
+            <div class="live-heading">
+              <div>
+                <p class="eyebrow">Architecture</p>
+                <h2 id="flow-title">Live request flow</h2>
+              </div>
+              <a id="flow-open" class="flow-link" target="_blank" rel="noopener"
+                >Open in new window ↗</a
+              >
+            </div>
+            <label class="attempt-label"
+              >Request
+              <select id="flow-attempt">
+                <option value="">Follow latest request</option>
+              </select></label
+            >
+            <p id="flow-summary" class="flow-summary" role="status">
+              Waiting for a request
+            </p>
+            <div
+              id="flow-diagram"
+              class="diagram"
+              aria-label="Locker service architecture"
+            ></div>
+            <p class="diagram-caption">
+              <span class="legend-dot"></span> Observed in this request
+              <span class="legend-dot error"></span> Failed step
+            </p>
+            <div class="section-title">
+              <h3>Timeline</h3>
+              <span id="trace-status" class="live-status" role="status"></span>
+            </div>
+            <div id="flow-timeline" class="timeline"></div>
+            <p id="step-detail" class="step-detail" aria-live="polite">
+              Select a step to inspect its timing.
+            </p>
+          </section>
+          <aside class="context">
+            <section class="card">
+              <h2>Current reservation</h2>
+              <span class="state" id="state">No reservation</span>
+              <dl>
+                <dt>Reservation ID</dt>
+                <dd id="current-id">—</dd>
+                <dt>Compartment</dt>
+                <dd id="current-slot">—</dd>
+              </dl>
+              <a id="view-logs" hidden target="_blank" rel="noreferrer"
+                >View reservation logs ↗</a
+              >
+            </section>
+            <section class="card">
+              <h2>Pickup inbox</h2>
+              <p>
+                After a deposit or reissue, find the email by its reservation
+                ID.
+              </p>
+              <a data-tool="mailpit" target="_blank" rel="noreferrer"
+                >Open Mailpit ↗</a
+              >
+            </section>
+          </aside>
+        </div>
+        <section id="database" class="card database" aria-labelledby="db-title">
+          <div class="live-heading">
+            <div>
+              <p class="eyebrow">PostgreSQL</p>
+              <h2 id="db-title">Database inspector</h2>
+            </div>
+          </div>
+          <div class="db-grid">
+            <section>
+              <div class="section-title">
+                <h3>Current rows</h3>
+                <span id="rows-status" class="live-status"></span>
+              </div>
+              <label
+                >Table<select id="db-table">
+                  <option value="booking">reservations.booking</option>
+                  <option value="outbox">reservations.outbox</option>
+                  <option value="command_result">
+                    reservations.command_result
+                  </option>
+                  <option value="compartment">directory.compartment</option>
+                </select></label
+              >
+              <div id="db-rows" class="table-scroll"></div>
+              <div class="pager">
+                <button id="rows-prev" disabled>Previous</button
+                ><span id="rows-page"></span
+                ><button id="rows-next" disabled>Next</button>
+              </div>
+            </section>
+            <section>
+              <div class="section-title">
+                <h3>Committed changes</h3>
+                <span id="changes-status" class="live-status"></span>
+              </div>
+              <label
+                >Show<select id="change-scope">
+                  <option value="request">Selected request</option>
+                  <option value="all">All lab changes</option>
+                </select></label
+              >
+              <div id="db-changes" class="change-list"></div>
+              <div class="pager">
+                <button id="changes-prev" disabled>Previous</button
+                ><span id="changes-page"></span
+                ><button id="changes-next" disabled>Next</button>
+              </div>
+            </section>
+          </div>
+        </section>
+        <section class="card history" id="activity">
+          <div class="section-title">
+            <h2>Request history</h2>
+            <span id="count">0 requests</span>
+          </div>
+          <div id="entries"></div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

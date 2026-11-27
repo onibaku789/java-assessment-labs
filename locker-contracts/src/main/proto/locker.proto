@@ -1,0 +1,24 @@
+syntax = "proto3";
+package lockers.v1;
+option java_package = "study.locker.wire";
+option java_multiple_files = true;
+
+message Search { string site = 1; string size = 2; }
+message Key { string id = 1; }
+message Compartment { string id = 1; string site = 2; string size = 3; }
+message Compartments { repeated Compartment items = 1; }
+message Command { string request_id = 1; string id = 2; string code = 3; }
+message Booking { string id = 1; string compartment_id = 2; string state = 3; }
+service Directory {
+  rpc SearchCompartments(Search) returns (Compartments);
+  rpc GetCompartment(Key) returns (Compartment);
+}
+service Reservations {
+  rpc Available(Search) returns (Compartments);
+  rpc Get(Key) returns (Booking);
+  rpc Reserve(Command) returns (Booking);
+  rpc Cancel(Command) returns (Booking);
+  rpc Deposit(Command) returns (Booking);
+  rpc Reissue(Command) returns (Booking);
+  rpc Collect(Command) returns (Booking);
+}
