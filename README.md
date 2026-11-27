@@ -162,7 +162,7 @@ Run the complexity checks across all modules with the Maven wrapper.
 ./mvnw -Dtest=ComplexityTest,ComplexityLimitsTest test
 ```
 
-The same JUnit checks run during `./mvnw clean verify`. They cover handwritten Java in production and tests, including the shared architecture tests. The limits are 7 for cyclomatic complexity, 15 for class fan-out, and 30 statements per method or 150 per type under JavaNCSS. The responsibility review links each declaration to its source and explains where independent requirements meet. [Shared Checkstyle rules](config/checkstyle/complexity.xml) · [Responsibility review](docs/responsibilities/README.md)
+The same JUnit checks run during `./mvnw clean verify`. They cover handwritten Java in production and tests, including the shared architecture tests. The limits are 7 for cyclomatic complexity, 15 for class fan-out, and 30 statements per method or 150 per type under JavaNCSS. [Shared Checkstyle rules](config/checkstyle/complexity.xml)
 
 In IntelliJ IDEA, open a Java file and use **Code → Reformat Code** (⌥⌘L on macOS). The project scheme uses four spaces and a 120-column margin, and wraps long calls and declarations as needed. For complexity feedback in the editor, the optional CheckStyle-IDEA plugin uses the same rules and engine as Maven. [Project formatter](.idea/codeStyles/Project.xml) · [CheckStyle-IDEA configuration](.idea/checkstyle-idea.xml)
 
