@@ -1,0 +1,101 @@
+{{- range $name, $app := .Values.apps }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: {{ $name }}}
+spec:
+  {{- if not (and (eq $name "rest") $.Values.autoscale) }}
+  replicas: {{ if eq $name "rest" }}{{ $.Values.restReplicas }}{{ else }}1{{ end }}
+  {{- end }}
+  selector: {matchLabels: {app: {{ $name }}}}
+  template:
+    metadata: {labels: {app: {{ $name }}}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      {{- $vault := has $name (list "reservations" "notifications") }}
+      {{- if $vault }}
+      serviceAccountName: {{ $name }}
+      {{- end }}
+      containers:
+        - name: app
+          image: "locker/{{ $app.module }}:{{ $.Values.imageTag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            {{- range $key,$value := $app.env }}
+            - {name: {{ $key }}, value: {{ $value | quote }}}
+            {{- end }}
+            {{- if $vault }}
+            - {name: SPRING_CLOUD_VAULT_URI, value: "https://vault:8200"}
+            - {name: SPRING_CLOUD_VAULT_AUTHENTICATION, value: KUBERNETES}
+            - {name: SPRING_CLOUD_VAULT_KUBERNETES_ROLE, value: {{ $name }}}
+            - {name: SPRING_CLOUD_VAULT_KUBERNETES_SERVICEACCOUNTTOKENFILE, value: /run/vault/token}
+            - {name: SPRING_CLOUD_VAULT_SSL_TRUSTSTORE, value: "file:/run/vault/trust.p12"}
+            - {name: SPRING_CLOUD_VAULT_SSL_TRUSTSTORETYPE, value: PKCS12}
+            - {name: SPRING_CLOUD_VAULT_SSL_TRUSTSTOREPASSWORD, value: changeit}
+            - {name: SPRING_CLOUD_VAULT_CONNECTIONTIMEOUT, value: {{ $.Values.vault.connectTimeoutMs | quote }}}
+            - {name: SPRING_CLOUD_VAULT_READTIMEOUT, value: {{ $.Values.vault.readTimeoutMs | quote }}}
+            {{- end }}
+            {{- if has $name (list "directory" "reservations") }}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: {secretKeyRef: {name: locker-db, key: {{ upper $name }}_PASSWORD}}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: 8080}
+            {{- if has $name (list "directory" "reservations") }}
+            - {name: grpc, containerPort: {{ $app.env.LOCKER_GRPC_PORT }}}
+            {{- end }}
+          resources: {requests: {cpu: 100m, memory: 160Mi}, limits: {cpu: "1", memory: 512Mi}}
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          startupProbe: {httpGet: {port: http, path: /actuator/health/liveness}, periodSeconds: 2, failureThreshold: 90}
+          readinessProbe: {httpGet: {port: http, path: {{ if eq $name "rest" }}{{ $.Values.restReadinessPath }}{{ else }}/actuator/health/readiness{{ end }}}, periodSeconds: 2}
+          livenessProbe: {httpGet: {port: http, path: /actuator/health/liveness}, periodSeconds: 10}
+          {{- if has $name (list "rest" "graphql" "soap" "reservations" "notifications") }}
+          volumeMounts:
+            {{- if ne $name "notifications" }}
+            - {name: keys, mountPath: /run/locker, readOnly: true}
+            {{- end }}
+            {{- if $vault }}
+            - {name: vault, mountPath: /run/vault, readOnly: true}
+            {{- end }}
+      volumes:
+        {{- if ne $name "notifications" }}
+        - name: keys
+          secret: {secretName: locker-config, items: [{key: public.pem, path: public.pem}]}
+        {{- end }}
+        {{- if $vault }}
+        - name: vault
+          projected:
+            sources:
+              - serviceAccountToken: {path: token, audience: vault, expirationSeconds: 3600}
+              - configMap: {name: locker-vault-ca, items: [{key: trust.p12, path: trust.p12}]}
+        {{- end }}
+      {{- end }}
+{{- if has $name (list "rest" "graphql" "soap" "directory" "reservations") }}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: {{ $name }}}
+spec:
+  selector: {app: {{ $name }}}
+  ports:
+    {{- if has $name (list "directory" "reservations") }}
+    - {name: grpc, port: 9090, targetPort: grpc}
+    {{- else }}
+    - {name: http, port: 8080, targetPort: http}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.autoscale }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: rest}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: rest}
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 45}}
+{{- end }}

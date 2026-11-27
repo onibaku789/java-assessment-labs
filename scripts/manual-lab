@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export COMPOSE_FILE=compose.yaml:deploy/verify.compose.yaml:deploy/manual/compose.yaml
+export LAB_UID="$(id -u)" LAB_GID="$(id -g)"
+case "${1:-up}" in
+  up)
+    ./scripts/compose up -d
+    lab="http://$(./scripts/compose port manual 8080)"
+    grafana="http://$(./scripts/compose port grafana 3000)"
+    mailpit="http://$(./scripts/compose port mailpit 8025)"
+    for endpoint in "$lab/" "$grafana/api/health" http://localhost:18081/actuator/health/readiness; do
+      curl --retry 60 --retry-delay 1 --retry-all-errors --silent --fail --output /dev/null "$endpoint"
+    done
+    ./scripts/compose exec -T manual python - <<'PY'
+from time import monotonic, sleep
+from urllib.request import urlopen
+for service in ("directory", "reservations"):
+    end = monotonic() + 90
+    while True:
+        try:
+            with urlopen(f"http://{service}:8080/actuator/health/readiness", timeout=2):
+                break
+        except OSError:
+            if monotonic() >= end:
+                raise
+            sleep(1)
+PY
+    curl --retry 60 --retry-delay 1 --retry-all-errors --silent --fail --output /dev/null \
+      -H 'X-Lab-Role: customer' "$lab/gateway/rest/v1/compartments"
+    echo "Locker journey  $lab"
+    echo "Mailpit inbox   $mailpit"
+    echo "Grafana         $grafana/d/locker-overview/locker-overview"
+    ;;
+  resilience-drill) ./scripts/with-stack-env python3 -u scripts/resilience-drill.py ;;
+  down) ./scripts/compose down ;;
+  verify) ./scripts/with-stack-env ./mvnw -B -ntp -pl locker-verification -Dlocker.stack=true -Dlocker.protocolQuotas=true -Dlocker.manual=true verify ;;
+  *) echo 'Usage: scripts/manual-lab [up|down|verify|resilience-drill]' >&2; exit 2 ;;
+esac

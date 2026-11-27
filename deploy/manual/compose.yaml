@@ -1,0 +1,156 @@
+x-logging: &logging
+  LOGGING_CONFIG: file:/run/lab/logback.xml
+  LOGGING_STRUCTURED_FORMAT_FILE: logstash
+  JAVA_TOOL_OPTIONS: "-Xms48m -Xmx224m -XX:ActiveProcessorCount=2 -javaagent:/opt/tracing/agent.jar"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_SAMPLER: parentbased_always_off
+  OTEL_LOGS_EXPORTER: none
+  OTEL_METRICS_EXPORTER: none
+  OTEL_BSP_SCHEDULE_DELAY: "300"
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
+x-mounts: &mounts
+  - locker-event-logs:/var/log/lockers
+  - locker-agent:/opt/tracing:ro
+  - ./deploy/manual/telemetry/logback.xml:/run/lab/logback.xml:ro
+services:
+  rest:
+    depends_on: {log-init: {condition: service_completed_successfully}}
+    environment:
+      <<: *logging
+      OTEL_SERVICE_NAME: rest
+      LOGGING_FILE_NAME: /var/log/lockers/rest.json
+      LOCKER_PROTOCOL: rest
+    volumes: *mounts
+  graphql:
+    depends_on: {log-init: {condition: service_completed_successfully}}
+    environment:
+      <<: *logging
+      OTEL_SERVICE_NAME: graphql
+      LOGGING_FILE_NAME: /var/log/lockers/graphql.json
+      LOCKER_PROTOCOL: graphql
+    volumes: *mounts
+  soap:
+    depends_on: {log-init: {condition: service_completed_successfully}}
+    environment:
+      <<: *logging
+      OTEL_SERVICE_NAME: soap
+      LOGGING_FILE_NAME: /var/log/lockers/soap.json
+      LOCKER_PROTOCOL: soap
+    volumes: *mounts
+  directory:
+    depends_on: {log-init: {condition: service_completed_successfully}}
+    environment:
+      <<: *logging
+      OTEL_SERVICE_NAME: directory
+      LOGGING_FILE_NAME: /var/log/lockers/directory.json
+    volumes: *mounts
+  reservations:
+    depends_on: {log-init: {condition: service_completed_successfully}}
+    environment:
+      <<: *logging
+      OTEL_SERVICE_NAME: reservations
+      LOGGING_FILE_NAME: /var/log/lockers/reservations.json
+    volumes: *mounts
+  receipts:
+    depends_on: {log-init: {condition: service_completed_successfully}}
+    environment:
+      <<: *logging
+      OTEL_SERVICE_NAME: receipts
+      LOGGING_FILE_NAME: /var/log/lockers/receipts.json
+    volumes: *mounts
+  notifications:
+    depends_on: {log-init: {condition: service_completed_successfully}}
+    environment:
+      <<: *logging
+      OTEL_SERVICE_NAME: notifications
+      LOGGING_FILE_NAME: /var/log/lockers/notifications.json
+    volumes: *mounts
+  log-init:
+    build: {context: ., dockerfile: deploy/manual/Dockerfile, target: trace-init}
+    command: ["sh", "-ec", "cp /agent.jar /trace/agent.jar && chmod 444 /trace/agent.jar && chown 10001:10001 /logs"]
+    volumes: [locker-event-logs:/logs, locker-agent:/trace]
+  tempo:
+    image: grafana/tempo:2.9.0
+    command: ["-config.file=/etc/tempo/lab.yaml", "-config.expand-env=true"]
+    environment: {LAB_RETENTION_HOURS: "${LAB_RETENTION_HOURS:-72}"}
+    volumes: [./deploy/manual/telemetry/tempo.yaml:/etc/tempo/lab.yaml:ro, locker-traces:/var/tempo]
+  audit-init:
+    image: postgres:19.0-alpine
+    depends_on: {postgres: {condition: service_healthy}, reservations: {condition: service_started}, directory: {condition: service_started}}
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: lockers
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      LAB_RETENTION_HOURS: "${LAB_RETENTION_HOURS:-72}"
+      LAB_READER_PASSWORD: ${LAB_READER_PASSWORD}
+    volumes: [./deploy/manual/audit:/audit:ro]
+    entrypoint: ["sh", "/audit/install.sh"]
+  manual:
+    depends_on: {audit-init: {condition: service_completed_successfully}}
+    environment:
+      PGHOST: postgres
+      LAB_PORT: "${LAB_PORT:-18080}"
+      LAB_PAGE_SIZE: "${LAB_PAGE_SIZE:-20}"
+      LAB_REFRESH_MS: "${LAB_REFRESH_MS:-1000}"
+      LAB_HISTORY_LIMIT: "${LAB_HISTORY_LIMIT:-50}"
+      LAB_RETENTION_HOURS: "${LAB_RETENTION_HOURS:-72}"
+      LAB_BROWSER_TIMEOUT_MS: "${LAB_BROWSER_TIMEOUT_MS:-4000}"
+      LAB_GATEWAY_TIMEOUT_SECONDS: "${LAB_GATEWAY_TIMEOUT_SECONDS:-8}"
+      LAB_INSPECT_TIMEOUT_SECONDS: "${LAB_INSPECT_TIMEOUT_SECONDS:-2}"
+      LAB_TOKEN_TTL_SECONDS: "${LAB_TOKEN_TTL_SECONDS:-600}"
+      LOCKER_JWT_ISSUER: "${LOCKER_JWT_ISSUER:-urn:locker:lab}"
+      LOCKER_JWT_AUDIENCE: "${LOCKER_JWT_AUDIENCE:-locker-api}"
+      LAB_GRAFANA_URL: "${LAB_GRAFANA_URL:-http://localhost:${GRAFANA_PORT:-13000}}"
+      LAB_MAILPIT_URL: "${LAB_MAILPIT_URL:-http://localhost:${MAILPIT_PORT:-18025}}"
+      PGUSER: lab_reader
+      PGDATABASE: lockers
+      PGPASSWORD: ${LAB_READER_PASSWORD}
+    build: {context: ., dockerfile: deploy/manual/Dockerfile}
+    user: "${LAB_UID:-1000}:${LAB_GID:-1000}"
+    volumes: [./.lab/keys/private.pem:/run/lab/private.pem:ro]
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    ports: ["127.0.0.1:${LAB_PORT:-18080}:8080"]
+  loki:
+    image: grafana/loki:3.7.10
+    command: ["-config.file=/etc/loki/lab.yaml", "-config.expand-env=true"]
+    environment: {LAB_RETENTION_HOURS: "${LAB_RETENTION_HOURS:-72}"}
+    volumes: [./deploy/manual/telemetry/loki.yaml:/etc/loki/lab.yaml:ro, locker-loki:/loki]
+  alloy:
+    image: grafana/alloy:v1.22.0
+    command: ["run","--storage.path=/var/lib/alloy","/etc/alloy/lab.alloy"]
+    volumes: [./deploy/manual/telemetry/logs.alloy:/etc/alloy/lab.alloy:ro, locker-event-logs:/logs:ro, locker-alloy:/var/lib/alloy]
+    depends_on: [loki]
+  kafka-metrics:
+    image: danielqsj/kafka-exporter:v1.11.0
+    command: ["--kafka.server=kafka:9092","--group.filter=^locker-.*","--topic.filter=^locker[.].*"]
+    restart: on-failure
+    depends_on: [kafka]
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml","--storage.tsdb.retention.time=${LAB_RETENTION_HOURS:-72}h"]
+    volumes: [./deploy/manual/telemetry/prometheus.yaml:/etc/prometheus/prometheus.yml:ro, locker-prometheus:/prometheus]
+  grafana:
+    image: grafana/grafana:13.3.2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/locker-dashboards/overview.json
+    ports: ["127.0.0.1:${GRAFANA_PORT:-13000}:3000"]
+    volumes:
+      - ./deploy/manual/telemetry/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/manual/telemetry/dashboards:/var/lib/locker-dashboards:ro
+      - locker-grafana:/var/lib/grafana
+volumes:
+  locker-event-logs: {}
+  locker-loki: {}
+  locker-agent: {}
+  locker-traces: {}
+  locker-alloy: {}
+  locker-prometheus: {}
+  locker-grafana: {}

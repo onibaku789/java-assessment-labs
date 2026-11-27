@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: vault}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: reservations}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: notifications}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: lockers-vault-token-review}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects: [{kind: ServiceAccount, name: vault, namespace: lockers}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: vault}
+spec:
+  selector: {app: vault}
+  ports: [{port: 8200, targetPort: 8200}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: vault}
+spec:
+  replicas: 1
+  serviceName: vault
+  selector: {matchLabels: {app: vault}}
+  template:
+    metadata: {labels: {app: vault}}
+    spec:
+      serviceAccountName: vault
+      enableServiceLinks: false
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: vault
+          image: hashicorp/vault:2.2.2
+          command: [vault, server, "-config=/run/vault-config/vault.hcl"]
+          securityContext: {runAsUser: 100, runAsNonRoot: true, allowPrivilegeEscalation: false}
+          env:
+            - {name: VAULT_ADDR, value: "https://127.0.0.1:8200"}
+            - {name: VAULT_CACERT, value: /run/vault-tls/server.crt}
+          readinessProbe: {tcpSocket: {port: 8200}, periodSeconds: 2}
+          volumeMounts:
+            - {name: data, mountPath: /vault/file}
+            - {name: config, mountPath: /run/vault-config, readOnly: true}
+            - {name: tls, mountPath: /run/vault-tls, readOnly: true}
+        - name: unseal
+          image: hashicorp/vault:2.2.2
+          command: [sh, /run/vault-config/vault-unseal.sh]
+          env:
+            - {name: VAULT_ADDR, value: "https://127.0.0.1:8200"}
+            - {name: VAULT_CACERT, value: /run/ca/server.crt}
+          volumeMounts:
+            - {name: config, mountPath: /run/vault-config, readOnly: true}
+            - {name: ca, mountPath: /run/ca, readOnly: true}
+            - {name: unseal, mountPath: /run/unseal, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: locker-vault-config}}
+        - {name: ca, configMap: {name: locker-vault-ca}}
+        - {name: tls, secret: {secretName: locker-vault-tls, defaultMode: 0440}}
+        - {name: unseal, secret: {secretName: locker-vault-unseal, defaultMode: 0400}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}

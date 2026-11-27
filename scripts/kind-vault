@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$PWD/.lab/bin:$PATH" KUBECONFIG="$PWD/.lab/locker-kubeconfig"
+k() { kubectl -n lockers "$@"; }
+publish() { k create "$@" --dry-run=client -o yaml | k apply -f - >/dev/null; }
+./scripts/vault-lab prepare kind
+state=.lab/vault/kind
+publish secret generic locker-vault-tls --from-file="$state/tls/server.crt" --from-file="$state/tls/server.key"
+publish configmap locker-vault-ca --from-file="$state/tls/trust.p12" --from-file="$state/tls/server.crt"
+publish configmap locker-vault-config --from-file=deploy/vault/vault.hcl --from-file=deploy/vault/vault-configure.sh --from-file=deploy/vault/vault-unseal.sh
+publish secret generic locker-vault-unseal --from-file="$state/unseal"
+k apply -f deploy/vault/kind.yaml >/dev/null
+k rollout status statefulset/vault --timeout=120s
+./scripts/vault-lab configure kind
+publish secret generic locker-vault-unseal --from-file="$state/unseal"

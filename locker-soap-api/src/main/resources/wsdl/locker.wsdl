@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="urn:lockers:v1"
+             xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             targetNamespace="urn:lockers:v1">
+    <types>
+        <xs:schema targetNamespace="urn:lockers:v1" elementFormDefault="qualified">
+            <xs:complexType name="SearchInput">
+                <xs:sequence>
+                    <xs:element name="site" type="xs:string" minOccurs="0"/>
+                    <xs:element name="size" type="xs:string" minOccurs="0"/>
+                </xs:sequence>
+            </xs:complexType>
+            <xs:complexType name="KeyInput">
+                <xs:sequence>
+                    <xs:element name="id" type="xs:string"/>
+                </xs:sequence>
+            </xs:complexType>
+            <xs:complexType name="CommandInput">
+                <xs:sequence>
+                    <xs:element name="requestId" type="xs:string"/>
+                    <xs:element name="id" type="xs:string"/>
+                    <xs:element name="code" type="xs:string" minOccurs="0"/>
+                </xs:sequence>
+            </xs:complexType>
+            <xs:complexType name="Booking">
+                <xs:sequence>
+                    <xs:element name="id" type="xs:string"/>
+                    <xs:element name="compartmentId" type="xs:string"/>
+                    <xs:element name="state" type="xs:string"/>
+                </xs:sequence>
+            </xs:complexType>
+            <xs:complexType name="Compartment">
+                <xs:sequence>
+                    <xs:element name="id" type="xs:string"/>
+                    <xs:element name="site" type="xs:string"/>
+                    <xs:element name="size" type="xs:string"/>
+                </xs:sequence>
+            </xs:complexType>
+            <xs:complexType name="Compartments">
+                <xs:sequence>
+                    <xs:element name="items" type="tns:Compartment" minOccurs="0" maxOccurs="unbounded"/>
+                </xs:sequence>
+            </xs:complexType>
+            <xs:complexType name="Problem">
+                <xs:sequence>
+                    <xs:element name="code" type="xs:string"/>
+                    <xs:element name="message" type="xs:string"/>
+                </xs:sequence>
+            </xs:complexType>
+            <xs:element name="LockerFault" type="tns:Problem"/>
+            <xs:element name="available" type="tns:SearchInput"/>
+            <xs:element name="availableResponse" type="tns:Compartments"/>
+            <xs:element name="get" type="tns:KeyInput"/>
+            <xs:element name="getResponse" type="tns:Booking"/>
+            <xs:element name="reserve" type="tns:CommandInput"/>
+            <xs:element name="reserveResponse" type="tns:Booking"/>
+            <xs:element name="cancel" type="tns:CommandInput"/>
+            <xs:element name="cancelResponse" type="tns:Booking"/>
+            <xs:element name="deposit" type="tns:CommandInput"/>
+            <xs:element name="depositResponse" type="tns:Booking"/>
+            <xs:element name="reissue" type="tns:CommandInput"/>
+            <xs:element name="reissueResponse" type="tns:Booking"/>
+            <xs:element name="collect" type="tns:CommandInput"/>
+            <xs:element name="collectResponse" type="tns:Booking"/>
+        </xs:schema>
+    </types>
+    <message name="ProblemMessage">
+        <part name="detail" element="tns:LockerFault"/>
+    </message>
+    <message name="availableInput">
+        <part name="body" element="tns:available"/>
+    </message>
+    <message name="availableOutput">
+        <part name="body" element="tns:availableResponse"/>
+    </message>
+    <message name="getInput">
+        <part name="body" element="tns:get"/>
+    </message>
+    <message name="getOutput">
+        <part name="body" element="tns:getResponse"/>
+    </message>
+    <message name="reserveInput">
+        <part name="body" element="tns:reserve"/>
+    </message>
+    <message name="reserveOutput">
+        <part name="body" element="tns:reserveResponse"/>
+    </message>
+    <message name="cancelInput">
+        <part name="body" element="tns:cancel"/>
+    </message>
+    <message name="cancelOutput">
+        <part name="body" element="tns:cancelResponse"/>
+    </message>
+    <message name="depositInput">
+        <part name="body" element="tns:deposit"/>
+    </message>
+    <message name="depositOutput">
+        <part name="body" element="tns:depositResponse"/>
+    </message>
+    <message name="reissueInput">
+        <part name="body" element="tns:reissue"/>
+    </message>
+    <message name="reissueOutput">
+        <part name="body" element="tns:reissueResponse"/>
+    </message>
+    <message name="collectInput">
+        <part name="body" element="tns:collect"/>
+    </message>
+    <message name="collectOutput">
+        <part name="body" element="tns:collectResponse"/>
+    </message>
+    <portType name="LockerPortType">
+        <operation name="available">
+            <input message="tns:availableInput"/>
+            <output message="tns:availableOutput"/>
+            <fault name="LockerFault" message="tns:ProblemMessage"/>
+        </operation>
+        <operation name="get">
+            <input message="tns:getInput"/>
+            <output message="tns:getOutput"/>
+            <fault name="LockerFault" message="tns:ProblemMessage"/>
+        </operation>
+        <operation name="reserve">
+            <input message="tns:reserveInput"/>
+            <output message="tns:reserveOutput"/>
+            <fault name="LockerFault" message="tns:ProblemMessage"/>
+        </operation>
+        <operation name="cancel">
+            <input message="tns:cancelInput"/>
+            <output message="tns:cancelOutput"/>
+            <fault name="LockerFault" message="tns:ProblemMessage"/>
+        </operation>
+        <operation name="deposit">
+            <input message="tns:depositInput"/>
+            <output message="tns:depositOutput"/>
+            <fault name="LockerFault" message="tns:ProblemMessage"/>
+        </operation>
+        <operation name="reissue">
+            <input message="tns:reissueInput"/>
+            <output message="tns:reissueOutput"/>
+            <fault name="LockerFault" message="tns:ProblemMessage"/>
+        </operation>
+        <operation name="collect">
+            <input message="tns:collectInput"/>
+            <output message="tns:collectOutput"/>
+            <fault name="LockerFault" message="tns:ProblemMessage"/>
+        </operation>
+    </portType>
+    <binding name="LockerBinding" type="tns:LockerPortType">
+        <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+        <operation name="available">
+            <soap:operation soapAction="urn:lockers:available"/>
+            <input>
+                <soap:body use="literal"/>
+            </input>
+            <output>
+                <soap:body use="literal"/>
+            </output>
+            <fault name="LockerFault">
+                <soap:fault name="LockerFault" use="literal"/>
+            </fault>
+        </operation>
+        <operation name="get">
+            <soap:operation soapAction="urn:lockers:get"/>
+            <input>
+                <soap:body use="literal"/>
+            </input>
+            <output>
+                <soap:body use="literal"/>
+            </output>
+            <fault name="LockerFault">
+                <soap:fault name="LockerFault" use="literal"/>
+            </fault>
+        </operation>
+        <operation name="reserve">
+            <soap:operation soapAction="urn:lockers:reserve"/>
+            <input>
+                <soap:body use="literal"/>
+            </input>
+            <output>
+                <soap:body use="literal"/>
+            </output>
+            <fault name="LockerFault">
+                <soap:fault name="LockerFault" use="literal"/>
+            </fault>
+        </operation>
+        <operation name="cancel">
+            <soap:operation soapAction="urn:lockers:cancel"/>
+            <input>
+                <soap:body use="literal"/>
+            </input>
+            <output>
+                <soap:body use="literal"/>
+            </output>
+            <fault name="LockerFault">
+                <soap:fault name="LockerFault" use="literal"/>
+            </fault>
+        </operation>
+        <operation name="deposit">
+            <soap:operation soapAction="urn:lockers:deposit"/>
+            <input>
+                <soap:body use="literal"/>
+            </input>
+            <output>
+                <soap:body use="literal"/>
+            </output>
+            <fault name="LockerFault">
+                <soap:fault name="LockerFault" use="literal"/>
+            </fault>
+        </operation>
+        <operation name="reissue">
+            <soap:operation soapAction="urn:lockers:reissue"/>
+            <input>
+                <soap:body use="literal"/>
+            </input>
+            <output>
+                <soap:body use="literal"/>
+            </output>
+            <fault name="LockerFault">
+                <soap:fault name="LockerFault" use="literal"/>
+            </fault>
+        </operation>
+        <operation name="collect">
+            <soap:operation soapAction="urn:lockers:collect"/>
+            <input>
+                <soap:body use="literal"/>
+            </input>
+            <output>
+                <soap:body use="literal"/>
+            </output>
+            <fault name="LockerFault">
+                <soap:fault name="LockerFault" use="literal"/>
+            </fault>
+        </operation>
+    </binding>
+    <service name="LockerService">
+        <port name="LockerPort" binding="tns:LockerBinding">
+            <soap:address location="http://localhost:18083/soap/lockers"/>
+        </port>
+    </service>
+</definitions>

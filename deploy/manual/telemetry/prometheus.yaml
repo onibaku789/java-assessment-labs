@@ -1,0 +1,21 @@
+global: {scrape_interval: 5s, scrape_timeout: 4s}
+scrape_configs:
+  - job_name: lockers
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["rest:8080"]
+        labels: {service: rest}
+      - targets: ["graphql:8080"]
+        labels: {service: graphql}
+      - targets: ["soap:8080"]
+        labels: {service: soap}
+      - targets: ["directory:8080"]
+        labels: {service: directory}
+      - targets: ["reservations:8080"]
+        labels: {service: reservations}
+      - targets: ["receipts:8080"]
+        labels: {service: receipts}
+      - targets: ["notifications:8080"]
+        labels: {service: notifications}
+  - job_name: kafka
+    static_configs: [{targets: ["kafka-metrics:9308"]}]

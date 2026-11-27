@@ -1,6 +1,0 @@
-**
-!mvnw
-!.mvn/wrapper/maven-wrapper.jar
-!.mvn/wrapper/maven-wrapper.properties
-!release-lab/pom.xml
-!release-lab/src/**

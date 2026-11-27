@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Exercise the REST deployment on the dedicated kind cluster, then restore this release.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$PWD/.lab/bin:$PATH" KUBECONFIG="$PWD/.lab/locker-kubeconfig"
+[[ "$(kubectl config current-context)" == kind-lockers-lab ]]
+k() { kubectl -n lockers "$@"; }
+revision=$(helm status lockers -n lockers -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+changed=false
+load_pid=
+forward_pid=
+cleanup() {
+    [[ -z "$load_pid" ]] || kill "$load_pid" 2>/dev/null || true
+    [[ -z "$forward_pid" ]] || kill "$forward_pid" 2>/dev/null || true
+    wait 2>/dev/null || true
+    if [[ "$changed" == true ]]; then helm rollback lockers "$revision" -n lockers --wait --timeout 4m; fi
+}
+trap cleanup EXIT
+if ! kubectl -n kube-system get deploy metrics-server >/dev/null 2>&1; then
+    kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.1/components.yaml
+    kubectl -n kube-system patch deployment metrics-server --type=json -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+fi
+kubectl wait apiservice/v1beta1.metrics.k8s.io --for=condition=Available --timeout=3m
+changed=true
+helm upgrade lockers deploy/locker -n lockers --reuse-values --set autoscale=true --set-string apps.rest.env.LOCKER_QUOTA_RATE=60000 --set-string apps.rest.env.LOCKER_QUOTA_BURST=1000 --wait --timeout 4m
+k port-forward service/rest 19181:8080 --address 127.0.0.1 >.lab/drill-forward.log 2>&1 &
+forward_pid=$!
+for i in {1..30}; do curl -fsS http://127.0.0.1:19181/actuator/health/readiness >/dev/null 2>&1 && break; sleep 1; done
+# Each successful request exercises JWT validation, both gRPC hops and the availability query.
+python3 -u - <<'PY' >.lab/drill-traffic.log 2>&1 &
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from signal import SIGTERM, signal
+from threading import Event
+from http.client import HTTPConnection
+from subprocess import check_output
+from time import monotonic
+token = check_output(["scripts/token.py", "customer", "load-test"], text=True).strip()
+stop = Event()
+signal(SIGTERM, lambda *_: stop.set())
+deadline = monotonic() + 240
+def traffic(worker):
+    connection = HTTPConnection("127.0.0.1", 19181, timeout=5)
+    completed = 0
+    errors = 0
+    durations = deque(maxlen=1024)
+    while not stop.is_set() and monotonic() < deadline:
+        started = monotonic()
+        try:
+            connection.request("GET", "/v1/compartments?site=Central", headers={"Authorization":"Bearer "+token})
+            response = connection.getresponse()
+            response.read()
+            if response.status == 200:
+                durations.append((monotonic()-started)*1000)
+                completed += 1
+                if worker == 0 and completed in (1, 100, 1000): print("Authenticated requests served", completed)
+            else: errors += 1
+        except OSError:
+            errors += 1
+            connection.close()
+    connection.close()
+    return completed, errors, list(durations)
+with ThreadPoolExecutor(max_workers=16) as pool:
+    results = list(pool.map(traffic, range(16)))
+samples = sorted(ms for _, _, durations in results for ms in durations)
+if samples:
+    print("Successful requests:",sum(n for n,_,_ in results),"errors:",sum(e for _,e,_ in results),
+          "sampled p95 (ms):",round(samples[int(0.95*(len(samples)-1))],1))
+PY
+load_pid=$!
+for i in {1..60}; do
+    replicas=$(k get deployment/rest -o jsonpath='{.status.readyReplicas}')
+    if [[ "${replicas:-0}" -gt 2 ]] && grep -q 'Authenticated requests served' .lab/drill-traffic.log; then break; fi
+    sleep 3
+done
+[[ "${replicas:-0}" -gt 2 ]] && grep -q 'Authenticated requests served' .lab/drill-traffic.log || { k describe hpa rest; exit 1; }
+echo "CPU autoscaler reached $replicas ready REST replicas"
+k get hpa rest
+kill "$load_pid" 2>/dev/null || true
+wait "$load_pid" 2>/dev/null || true
+load_pid=
+tail -1 .lab/drill-traffic.log
+helm upgrade lockers deploy/locker -n lockers --reuse-values --set restReadinessPath=/actuator/health/intentionally-missing
+for i in {1..50}; do
+    bad=$(k get pods -l app=rest -o json | python3 -c 'import sys,json; print(next((p["metadata"]["name"] for p in json.load(sys.stdin)["items"] if "missing" in p["spec"]["containers"][0]["readinessProbe"]["httpGet"]["path"] and any(c["type"]=="Ready" and c["status"]=="False" for c in p["status"].get("conditions",[])) and any(c.get("started") for c in p["status"].get("containerStatuses",[]))), ""))')
+    [[ -z "$bad" ]] || break
+    sleep 2
+done
+[[ -n "$bad" ]]
+k get endpointslice -l kubernetes.io/service-name=rest -o json | python3 -c 'import sys,json; ready=[e["targetRef"]["name"] for s in json.load(sys.stdin)["items"] for e in s["endpoints"] if e["conditions"].get("ready")]; assert ready and sys.argv[1] not in ready; print("Ready endpoints while replacement is unavailable:", len(ready))' "$bad"
+# Use cluster DNS and the Service's ready endpoints for this request.
+scripts/token.py customer rollout | k exec -i postgres-0 -- sh -c 'read -r token; wget -qO /dev/null --header "Authorization: Bearer $token" http://rest:8080/v1/compartments'
+helm rollback lockers "$revision" -n lockers --wait --timeout 4m
+changed=false
+k rollout status deployment/rest --timeout=90s
+k get deployment/rest -o jsonpath='Restored readiness probe: {.spec.template.spec.containers[0].readinessProbe.httpGet.path}{"\n"}'

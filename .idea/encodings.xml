@@ -1,8 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Encoding">
-    <file url="file://$PROJECT_DIR$/parcel-api/src/main/java" charset="UTF-8" />
-    <file url="file://$PROJECT_DIR$/release-lab/src/main/java" charset="UTF-8" />
-    <file url="file://$PROJECT_DIR$/shipment-worker/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-contracts/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-delivery/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-directory-service/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-edge/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-graphql-api/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-rest-api/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-security/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-soap-api/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/locker-verification/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/notification-worker/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/receipt-worker/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/reservation-service/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
+    <file url="PROJECT" charset="UTF-8" />
   </component>
 </project>

@@ -1,0 +1,5 @@
+apiVersion: 1
+providers:
+  - name: Locker lab
+    type: file
+    options: {path: /var/lib/locker-dashboards}

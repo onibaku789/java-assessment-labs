@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+./scripts/lab-keys
+env_files=(--env-file .lab/keys/database.env)
+if [[ -f .env ]]; then env_files=(--env-file .env "${env_files[@]}"); fi
+compose=(docker compose "${env_files[@]}")
+if [[ "${1:-}" == up ]]; then
+    ./mvnw -B -ntp -DskipTests package
+    ./scripts/vault-lab prepare compose
+    "${compose[@]}" up -d vault vault-unseal
+    ./scripts/vault-lab configure compose
+    ./scripts/vault-cutover compose
+    pending=.lab/vault/compose/pre-transit/deploy-pending
+    if [[ -f "$pending" ]]; then
+        "${compose[@]}" up -d --build --no-deps reservations notifications
+        rm "$pending"
+    fi
+    shift
+    set -- up --build "$@"
+fi
+exec "${compose[@]}" "$@"

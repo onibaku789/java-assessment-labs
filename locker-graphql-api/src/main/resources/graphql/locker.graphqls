@@ -1,0 +1,12 @@
+scalar UUID
+
+type Slot { id: ID!, site: String!, size: String! }
+type Reservation { id: ID!, compartmentId: ID!, state: String! }
+type Query { available(site: String, size: String): [Slot!]!, reservation(id: UUID!): Reservation }
+type Mutation {
+  reserve(requestId: UUID!, compartmentId: ID!): Reservation
+  cancel(requestId: UUID!, id: UUID!): Reservation
+  deposit(requestId: UUID!, id: UUID!): Reservation
+  reissue(requestId: UUID!, id: UUID!): Reservation
+  collect(requestId: UUID!, id: UUID!, code: String!): Reservation
+}

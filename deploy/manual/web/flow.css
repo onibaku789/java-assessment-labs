@@ -1,0 +1,274 @@
+.canvas {
+  max-width: 1640px;
+}
+.grid {
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.45fr);
+}
+.run,
+.context {
+  grid-column: 1;
+}
+.live-card {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+}
+.live-heading,
+.pager,
+.diagram-caption,
+.timeline button,
+.change-list summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.live-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.eyebrow {
+  font:
+    650 11px/1.3 system-ui,
+    sans-serif;
+  color: var(--green);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0 0 4px;
+}
+.flow-link {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--green);
+}
+.flow-summary {
+  font-weight: 650;
+  margin: 10px 0;
+}
+.live-status,
+.pager span,
+.diagram-caption,
+.step-detail,
+.timeline small,
+.change-list small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.diagram {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  background: #f4f8f6;
+  border-radius: 8px;
+  padding: 8px;
+}
+.diagram svg {
+  display: block;
+  width: 100%;
+  min-width: 510px;
+}
+.diagram .node :is(polygon, path, ellipse) {
+  fill: #e6ede9;
+  stroke: #b7c8bf;
+  stroke-width: 1.5;
+}
+.diagram .node text {
+  fill: #304a41;
+}
+.diagram .node.seen :is(polygon, path, ellipse) {
+  fill: #d1eddb;
+  stroke: #4f9b74;
+  stroke-width: 2;
+}
+.diagram .node.focused :is(polygon, path, ellipse) {
+  stroke: #123e2b;
+  stroke-width: 4;
+}
+.diagram .edge path {
+  stroke: #a6b8af;
+  stroke-width: 1.5;
+}
+.diagram .edge polygon {
+  fill: #a6b8af;
+  stroke: #a6b8af;
+}
+.diagram .edge.seen path,
+.diagram .edge.focused path {
+  stroke: #12734e;
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+.diagram .edge.seen polygon {
+  fill: #12734e;
+  stroke: #12734e;
+}
+.diagram .edge.failed path,
+.diagram .edge.failed polygon {
+  stroke: #b14235;
+}
+.diagram .edge.failed polygon {
+  fill: #b14235;
+}
+.diagram-caption {
+  margin: 6px 0 15px;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #258254;
+}
+.legend-dot.error {
+  background: #b14235;
+  margin-left: 8px;
+}
+.timeline,
+.change-list,
+.table-scroll {
+  overflow: auto;
+  max-height: 280px;
+}
+.timeline button {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  text-align: left;
+  padding: 7px 4px;
+  background: white;
+  flex-wrap: wrap;
+}
+.timeline button:hover,
+.timeline button[aria-pressed="true"] {
+  background: #e7f4ec;
+}
+.timeline small {
+  margin-left: auto;
+}
+.timeline time,
+.change-list time {
+  font:
+    11px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.timeline button.bad-step strong {
+  color: #a3392d;
+}
+.step-detail {
+  margin-top: 10px;
+  min-height: 1.5em;
+}
+.database {
+  margin-top: 18px;
+}
+.db-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+  gap: 20px;
+}
+.db-grid select,
+.attempt-label select {
+  width: 100%;
+}
+.db-grid section {
+  min-width: 0;
+}
+.table-scroll,
+.change-list {
+  margin-top: 10px;
+}
+.table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font:
+    12px/1.5 ui-monospace,
+    monospace;
+}
+.table-scroll th,
+.table-scroll td {
+  white-space: nowrap;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.table-scroll th {
+  position: sticky;
+  top: 0;
+  background: #eaf0ec;
+  color: #305044;
+}
+.pager {
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.pager button {
+  padding: 4px 8px;
+}
+.change-list details {
+  border-bottom: 1px solid var(--line);
+  padding: 5px 0;
+  font-size: 13px;
+}
+.change-list summary {
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.change-list summary::before {
+  content: "▸";
+}
+.change-list details[open] summary::before {
+  content: "▾";
+}
+.change-list pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 4px 0;
+}
+.flow-window
+  :is(
+    .sidebar,
+    .top,
+    .intro,
+    .canvas > h1,
+    .run,
+    .context,
+    .history,
+    #flow-open
+  ) {
+  display: none;
+}
+.flow-window main {
+  margin: 0;
+}
+.flow-window .grid {
+  display: block;
+}
+.flow-window .diagram svg {
+  max-height: 340px;
+}
+.flow-window .canvas {
+  max-width: 1400px;
+}
+@media (max-width: 1100px) {
+  .grid {
+    grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+@media (max-width: 880px) {
+  .grid,
+  .db-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .live-card,
+  .run,
+  .context {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .sidebar nav {
+    flex-wrap: wrap;
+  }
+}

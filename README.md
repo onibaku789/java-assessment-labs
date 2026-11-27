@@ -1,176 +1,312 @@
-# Java assessment labs
+# Pickup locker microservices
 
-Build a parcel tracking API, make shipment processing safe to retry, and operate a Java service on Kubernetes. The eight-week path takes about 5–7 hours per week. Each project starts with working code and two baseline tests. The checkboxes below are the work to do.
+A customer reserves a locker, a courier deposits a parcel, and the customer collects it with an emailed pickup code. REST, GraphQL and SOAP are three separately deployable applications. Each supports the entire journey. A reservation created through one protocol can be completed through either of the others.
 
-## Run the tests
+## Start here
 
-From the repository root, install the project JDK once with SDKMAN and select it in each new shell. [SDKMAN installation](https://sdkman.io/install/)
+Start Docker, select the project’s Temurin 25 LTS with SDKMAN, and run the Compose verification from the repository root. You also need Bash, Python 3 and OpenSSL. The first run downloads dependencies and builds seven images.
 
 ```bash
 sdk env install
 sdk env
-./mvnw --version
+./scripts/compose-verify
 ```
 
-The Maven Wrapper downloads Maven 3.10.2 on first use. Use JUnit Jupiter to run tests and AssertJ for all Java test assertions. Surefire runs the six smoke tests. Failsafe discovers the integration suites for all eight weeks during `verify`. Start Docker before running the full build.
+This leaves the stack running. The JUnit suite reserves a compartment over REST, deposits over SOAP, reads the eight-digit code from Mailpit, collects over GraphQL, and restores the resulting audit receipts from a local backup. It also exercises all seven operations through each protocol. The suite selects an available small compartment at Central. It needs one free slot.
+
+| Interface | Compose address | Contract |
+| --- | --- | --- |
+| REST | http://localhost:18081/v1 | [OpenAPI](locker-rest-api/src/main/resources/static/openapi.yaml) |
+| GraphQL | http://localhost:18082/graphql | [GraphQL schema](locker-graphql-api/src/main/resources/graphql/locker.graphqls) |
+| SOAP 1.1 | http://localhost:18083/soap/lockers | [WSDL](locker-soap-api/src/main/resources/wsdl/locker.wsdl), also served at `?wsdl` with a bearer token |
+| Mailpit inbox | http://localhost:18025 | Inspect pickup messages by reservation ID |
+| S3-compatible receipt store | http://localhost:19090 | The verification override exposes this loopback port |
+
+To start only the application stack, run `./scripts/compose up -d`. To stop it and retain its data, run `./scripts/compose down`. PostgreSQL, Kafka, Mailpit, the receipt store and Vault each have persistent storage. Keep `.lab/keys` for JWT signing and database access. The [pickup key operations](#pickup-key-operations) describe the additional state needed to recover encrypted mail and reservation replays.
+
+### Try the journey in a browser
+
+From the repository root, run `sdk env` and `./scripts/manual-lab up`. This starts the locker services, browser helper, and local Grafana stack together. Open [Guided locker journey](http://localhost:18080). By default, the screen supplies ten-minute tokens for two fixed demo identities. The browser needs no keys or tokens.
+
+1. As **Customer**, choose an available compartment and click **Reserve compartment**. The default protocol is REST. Copy the reservation ID or use the ID that the screen carries forward.
+2. Switch to **Courier** and click **Deposit parcel** to call SOAP. To try an authorization failure, attempt the deposit as Customer first.
+3. Open the [Mailpit inbox](http://localhost:18025). Find the message with your reservation ID in its subject. Switch back to **Customer**, enter the eight-digit code, and click **Collect parcel** to call GraphQL.
+4. Expand a row in **Request history** to inspect its wire format, HTTP status, application response and duration. **Retry last command** repeats its original identity, protocol, input and request UUID. For a malformed reservation ID, the history shows `INVALID_ARGUMENT` with HTTP 400 for REST and GraphQL, or HTTP 500 with a SOAP 1.1 `Client` fault. GraphQL errors raised during execution can appear inside HTTP 200. The operation selector also supports lookup, cancellation before deposit, and code reissue. You can choose any protocol for any operation.
+
+Click **View reservation logs** on the reservation card to open its events in [Grafana](http://localhost:13000/d/locker-overview/locker-overview). The dashboard also shows gateway request rate, errors and p95 duration by protocol. An increasing **outbox** count points to events awaiting publication in PostgreSQL. Increasing **Kafka consumer lag** points to published records still awaiting a worker's committed offset. Delivery counters distinguish successful sends or writes, identical receipt replays, retries and exhausted deliveries. Allow a few seconds for log shipping and metric scrapes. A latency percentile requires traffic in the selected time window.
+
+**Follow a live request.** The **Live request flow** panel highlights calls on the LikeC4 diagram as OpenTelemetry spans arrive. Click **Open in new window** to watch alongside the guided journey. The window follows this journey automatically. Choose an earlier attempt in the request selector to pin it, or select **Inspect request flow** in request history. The timeline continues after the HTTP response, through Kafka publication, email delivery and receipt storage. A retry gets a separate trace even when it reuses the original command key.
+
+**Inspect PostgreSQL.** The **Database inspector** refreshes every second by default while visible. Browse the four application tables, expand committed changes to see their before and after values, or select **All lab changes** to include other clients. The outbox can already be empty by the time you look. The change history keeps both the insert and delete for the configured retention window. Existing rows appear immediately. Change capture begins when the manual lab installs its triggers. The inspector connects using a role with read access to projected views.
+
+The manual Compose overlay runs Tempo and starts the Java services with the OpenTelemetry agent. The reservations migration adds an optional trace parent to outbox entries for asynchronous delivery. The [LikeC4 model](deploy/manual/architecture/locker.c4) ships as a local SVG. After editing the model, regenerate it from the repository root with `node deploy/manual/architecture/render.mjs`.
+
+Prometheus scrapes the seven application endpoints and the Kafka exporter. Alloy ships the application event files to Loki. Reservation, request and event IDs are searchable JSON fields. The domain events omit message bodies, pickup codes, email addresses and authentication headers. Grafana, the browser helper and Mailpit bind to the local loopback interface. The dashboard is available as a local viewer. The log store and metrics store retain three days of data by default.
 
 ```bash
-./mvnw test       # Smoke tests across all three projects
-./mvnw verify     # Smoke tests plus every enabled weekly suite
+./scripts/manual-lab verify   # Protocol checks and the two-window Chrome journey
+./scripts/manual-lab down     # Stop the stack and keep its volumes
 ```
 
-In IntelliJ IDEA, open the root `pom.xml` as a Maven project, select the SDKMAN Temurin 25 JDK and **Maven Wrapper** distribution, and run **Lifecycle → verify** in the root Maven project. Each weekly class and its methods also have JUnit run actions.
+The browser test needs Google Chrome and network access on the first run for Selenium Manager to obtain the matching driver. Standard `./scripts/compose up -d` starts the smaller application stack. Both commands use the same local application data.
 
-### Work on a branch and merge into main
+### Configure the lab
 
-Use one branch per exercise. Start Week 1 from the latest merged version of `main`.
+Set values in the shell for a single run, or put one `NAME=value` per line in `.env` at the repository root and run `./scripts/manual-lab up`. Shell values take precedence. Keep port or identity overrides in `.env` when you want later verification and token commands to reuse them. Re-run `up` after editing the file. The deployment keeps its PostgreSQL data.
 
 ```bash
-git switch main
-git pull --ff-only
-git switch -c feat/week-01-parcel-creation
+LOCKER_PICKUP_TTL=30m LOCKER_PICKUP_MAX_ATTEMPTS=3 ./scripts/manual-lab up
 ```
 
-Enable the Week 1 suite, implement the exercise, and run the tests. Then publish your branch and open a pull request.
+Reservations snapshots the expiry and failure limit on deposit and reissue. Changing the deployment preserves both values and the failed-attempt count for an active code. A reissue uses the current policy, resets the counter and invalidates the previous code. The migration assigns existing codes their original five-attempt limit. In the browser, select **booking** in the database inspector to see `expires_at`, `attempts` and `pickup_max_attempts` for a deposited booking. At the expiry instant the code is already invalid.
+
+| Setting | Default | Consumer and effect |
+| --- | --- | --- |
+| `LOCKER_PICKUP_TTL` | `15m` | Reservations, lifetime of a newly issued code. Positive Spring duration, such as `45s` or `30m`. |
+| `LOCKER_PICKUP_MAX_ATTEMPTS` | `5` | Reservations, positive number of failed collections allowed per issued code. Replaying the same request ID counts once. |
+| `LOCKER_RESERVATIONS_DEADLINE` / `LOCKER_DIRECTORY_DEADLINE` | `4s` / `2s` | gRPC deadlines per call, from each gateway to Reservations and from Reservations to Directory. |
+| `RESERVATIONS_GRPC_PORT` / `DIRECTORY_GRPC_PORT` | `9090` each | Compose listener ports. Compose derives client targets from these values. |
+| `LOCKER_RESERVATIONS` / `LOCKER_DIRECTORY` | `reservations:9090` / `directory:9090` | Override the gRPC targets with a host and port. |
+| `LOCKER_OUTBOX_POLL_INTERVAL` | `300ms` | Reservations, delay after the previous relay run ends. Minimum 1 ms. |
+| `LOCKER_OUTBOX_BATCH_SIZE` | `50` | Reservations, maximum pending events read in sequence per relay transaction. Positive integer. |
+| `LOCKER_OUTBOX_ACK_TIMEOUT` | `12s` | Reservations, maximum wait for the Kafka send acknowledgement per event. The relay retains an unacknowledged row for retry. |
+| `LOCKER_DELIVERY_RETRY_RETRIES` / `LOCKER_DELIVERY_RETRY_DELAY` | `3` / `500ms` | Both workers, short retries and their delay during a destination outage. With zero short retries, the first failure goes straight to the recovery interval. |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | Reservations and both workers, Kafka broker addresses. |
+| `LOCKER_KAFKA_MAX_BLOCK_MS` / `LOCKER_KAFKA_DELIVERY_TIMEOUT_MS` / `LOCKER_KAFKA_REQUEST_TIMEOUT_MS` | `3000` / `10000` / `3000` | Reservations producer, maximum blocking time in `send`, delivery deadline and broker request timeout in milliseconds. |
+| `DIRECTORY_DB_POOL_SIZE` / `RESERVATIONS_DB_POOL_SIZE` | `8` each | Compose maximum JDBC connections for each service. In Helm use `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE` in the corresponding service. |
+| `LOCKER_CORS_ORIGINS` | `http://localhost:18081,http://localhost:18082,http://localhost:18083` | All gateways, comma-separated browser origins. |
+| `LOCKER_JWT_ISSUER` / `LOCKER_JWT_AUDIENCE` | `urn:locker:lab` / `locker-api` | Gateways, Reservations and demo signers. All participants must agree. |
+| `LOCKER_RECEIPTS_BUCKET` / `AWS_REGION` | `locker-audit` / `us-east-1` | Receipt worker and host backup/restore client. Compose and Helm create the matching S3Mock bucket. Existing receipts stay in their original bucket. |
+| `LOCKER_STORAGE` / `LOCKER_S3_ENDPOINT` | `http://objects:9090` / `http://127.0.0.1:19090` | Worker S3 endpoint inside the network and backup client endpoint on the host. |
+| `LOCKER_MAIL_FROM` | `lockers@example.test` | Notification sender address. |
+| `SPRING_MAIL_HOST` / `SPRING_MAIL_PORT` | `mailpit` / `1025` | Notification SMTP destination. |
+| `SPRING_MAIL_PROPERTIES_MAIL_SMTP_TIMEOUT` / `SPRING_MAIL_PROPERTIES_MAIL_SMTP_CONNECTIONTIMEOUT` | `5000` each | Notification SMTP read and connect timeouts in milliseconds. |
+
+For a Spring-only run the pickup properties are `locker.pickup.ttl` and `locker.pickup.max-attempts`. On Kubernetes, set environment entries in the chart's `apps.<service>.env` map. For example, add the following settings to the values file used for your Helm release. The gRPC listener setting there is `LOCKER_GRPC_PORT` for each service. The chart's stable service port is 9090.
+
+```yaml
+apps:
+  reservations:
+    env:
+      LOCKER_PICKUP_TTL: "30m"
+      LOCKER_PICKUP_MAX_ATTEMPTS: "3"
+```
+
+#### Browser and observability settings
+
+| Setting | Default | Consumer and effect |
+| --- | --- | --- |
+| `LAB_REFRESH_MS` | `1000` | Milliseconds between visible live-flow and database refreshes. |
+| `LAB_PAGE_SIZE` | `20` | Inspector rows per page for tables and changes. |
+| `LAB_HISTORY_LIMIT` | `50` | Browser entries retained per journey and shown in request history. |
+| `LAB_RETENTION_HOURS` | `72` | Browser flow history, database audit changes, Tempo, Loki and Prometheus. Minimum 24 hours for Loki. Database changes leave the visible window immediately and are pruned on the next captured write. |
+| `LAB_BROWSER_TIMEOUT_MS` | `4000` | Browser timeout in milliseconds for inspector and diagram reads. |
+| `LAB_INSPECT_TIMEOUT_SECONDS` / `LAB_GATEWAY_TIMEOUT_SECONDS` | `2` / `8` | Helper timeouts for PostgreSQL and Tempo reads, and for forwarding a gateway request. |
+| `LAB_PORT` / `GRAFANA_PORT` / `MAILPIT_PORT` | `18080` / `13000` / `18025` | Published loopback ports for the browser lab, Grafana and Mailpit. |
+| `LAB_GRAFANA_URL` / `LAB_MAILPIT_URL` | `http://localhost:13000` / `http://localhost:18025` | Override the browser links. By default each uses its configured published port. |
+| `LAB_TOKEN_TTL_SECONDS` | `600` | Demo JWT lifetime in seconds for the browser helper and CLI. |
+
+Open `/inspect/config` on the manual lab to see the effective browser settings. To use the same Compose configuration for a host-side command, prefix it with `./scripts/with-stack-env`, for example `./scripts/with-stack-env ./scripts/token.py customer alex`. Both Compose verification scripts do this automatically.
+
+### Make a reservation
+
+The token tool issues a ten-minute token for a synthetic customer or courier. The same bearer token works at all three gateways.
 
 ```bash
-./mvnw verify
-git add parcel-api/
-git diff --cached
-git commit -m "Implement parcel creation"
-git push -u origin HEAD
-gh pr create --base main --fill
+CUSTOMER=$(./scripts/with-stack-env ./scripts/token.py customer alex)
+COURIER=$(./scripts/with-stack-env ./scripts/token.py courier driver)
+curl -fsS -H "Authorization: Bearer $CUSTOMER" \
+  'http://localhost:18081/v1/compartments?site=Central&size=LARGE'
+
+REQUEST=$(python3 -c 'import uuid; print(uuid.uuid4())')
+curl -i -H "Authorization: Bearer $CUSTOMER" -H "Idempotency-Key: $REQUEST" \
+  -H 'Content-Type: application/json' -d '{"compartmentId":"CENTRAL-L1"}' \
+  http://localhost:18081/v1/reservations
 ```
 
-New commits pushed to the same branch update the pull request and rerun CI. Once the **verify** check passes, review **Files changed** on GitHub and choose **Squash and merge**. Then run `git switch main` and `git pull --ff-only` locally before creating the next exercise branch.
+Copy the reservation `id` from the response. Send this GraphQL mutation to `/graphql` with the courier token, `Accept: application/graphql-response+json`, a fresh request UUID and that reservation ID. Update existing GraphQL operations to declare reservation ID inputs and `requestId` as `UUID!`. Compartment IDs such as `CENTRAL-L1` use `ID!`. Clients requesting legacy `application/json` receive HTTP 200 for invalid UUIDs and can read `errors[].extensions.code`. After a successful deposit, the pickup message arrives in Mailpit with the reservation ID in its subject.
 
-### Start Week 1
+```graphql
+mutation Deposit($request: UUID!, $id: UUID!) {
+  deposit(requestId: $request, id: $id) { id compartmentId state }
+}
+```
 
-Run the Week 1 suite from the repository root with Docker running. Its HTTP contract tests use H2. Its PostgreSQL tests start the app on a temporary port and use a disposable database.
+To finish over SOAP, post this envelope to `/soap/lockers` with the customer bearer token, `Content-Type: text/xml` and `SOAPAction: "urn:lockers:collect"`. Substitute another fresh request UUID, the reservation ID and the emailed code. Keep leading zeroes in the code.
+
+```xml
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" xmlns:l="urn:lockers:v1">
+  <s:Body><l:collect>
+    <l:requestId>REQUEST_UUID</l:requestId><l:id>RESERVATION_UUID</l:id><l:code>PICKUP_CODE</l:code>
+  </l:collect></s:Body>
+</s:Envelope>
+```
+
+| Operation | REST | GraphQL | SOAP |
+| --- | --- | --- | --- |
+| Find available compartments | `GET /v1/compartments` with optional `site`, `size` | `available` | `available` |
+| Reserve | `POST /v1/reservations` | `reserve` | `reserve` |
+| Read a reservation | `GET /v1/reservations/{id}` | `reservation` | `get` |
+| Cancel before deposit | `POST /v1/reservations/{id}/cancel` | `cancel` | `cancel` |
+| Deposit | `POST /v1/reservations/{id}/deposit` | `deposit` | `deposit` |
+| Reissue a pickup code | `POST /v1/reservations/{id}/reissue` | `reissue` | `reissue` |
+| Collect | `POST /v1/reservations/{id}/collect` | `collect` | `collect` |
+
+Reads require `locker.read`. Customers use `locker.reserve` and a verified email to reserve. Only the owner can cancel, reissue or collect. Couriers use `locker.deposit` to deposit and can inspect reservations with read access. Each new command takes a UUID. Reuse that UUID and the same input when retrying the same command. The service returns its original result even across gateways. REST takes the UUID in `Idempotency-Key`. GraphQL and SOAP take `requestId`.
+
+## Java quality checks
+
+Run the complexity checks across all modules with the Maven wrapper.
+
+```sh
+./mvnw -Dtest=ComplexityTest,ComplexityLimitsTest test
+```
+
+The same JUnit checks run during `./mvnw clean verify`. They cover handwritten Java in production and tests, including the shared architecture tests. The limits are 7 for cyclomatic complexity, 15 for class fan-out, and 30 statements per method or 150 per type under JavaNCSS. [Shared Checkstyle rules](config/checkstyle/complexity.xml)
+
+In IntelliJ IDEA, open a Java file and use **Code → Reformat Code** (⌥⌘L on macOS). The project scheme uses four spaces and a 120-column margin, and wraps long calls and declarations as needed. For complexity feedback in the editor, the optional CheckStyle-IDEA plugin uses the same rules and engine as Maven. [Project formatter](.idea/codeStyles/Project.xml) · [CheckStyle-IDEA configuration](.idea/checkstyle-idea.xml)
+
+## Where the work happens
+
+```mermaid
+flowchart LR
+    R[REST] -->|gRPC| B[Reservations]
+    G[GraphQL] -->|gRPC| B
+    S[SOAP] -->|gRPC| B
+    R & G & S -->|Caller quota| V[(Valkey)]
+    B -->|gRPC| D[Locker directory]
+    D --> DC[(Directory schema)]
+    B --> DB[(Reservations and outbox)]
+    DB -->|Outbox relay| K[Kafka]
+    K -->|Pickup mail| N[Notification worker]
+    K -->|Lifecycle events| A[Receipt worker]
+    B -->|Encrypt mail and verify commands or codes| T[Vault Transit]
+    N -->|Decrypt mail| T
+    N --> M[Mailpit]
+    A --> O[(S3 receipts)]
+```
+
+The directory owns sites, compartment sizes and IDs. Reservations owns occupancy and the state transitions. Each uses a separate PostgreSQL role and Liquibase schema. A partial unique index allows only one active reservation per compartment. A row lock serializes deposits, failed code attempts, collection and cancellation. Cancellation and collection make the compartment available again. The [protobuf contract](locker-contracts/src/main/proto/locker.proto) defines both internal services. By default, the gateway allows four seconds for Reservations, which allows two seconds for the Directory.
+
+Spring Security checks signed JWTs at each public gateway. Reservations verifies the forwarded token on the internal gRPC call. The issuer is `urn:locker:lab` and the audience is `locker-api`. The internal gRPC transport uses plaintext in the lab. Both deployments use TLS for Vault, local JWT signing keys, Mailpit and an S3 emulator.
+
+### Following a reservation through the code
+
+The REST controller, GraphQL resolver and SOAP endpoint call the same gateway port. Spring applies two aspects to the gateway port. The outer aspect times the whole call and records its outcome, including a rejection by the caller-quota aspect. At Reservations, the gRPC adapter binds the verified caller while a Spring method-security proxy checks the OAuth scope. The [security facade](reservation-service/src/main/java/study/locker/reservation/adapter/security/SecuredReservations.java) sets the read visibility for a customer or courier.
+
+Follow a write through the [reservation wiring](reservation-service/src/main/java/study/locker/reservation/bootstrap/ReservationConfiguration.java). After the OAuth scope check, Reservations parses the request UUID. Spring enforces `@NotBlank` and `@Size(max = 100)` when the facade calls the `@Validated` submission bean. Then the observation decorator calls the transaction decorator. Inside the transaction, the replay handler locks the request key and either returns the original result or runs the [business handler](reservation-service/src/main/java/study/locker/reservation/application/ReservationCommands.java). The [Reservation aggregate](reservation-service/src/main/java/study/locker/reservation/domain/model/Reservation.java) owns the state transitions and pickup-code rules. A wrong code commits its attempt counter and journal entry before the endpoint returns an error. A rollback produces no committed-command log.
+
+The Kafka message converter decodes JSON. Spring Kafka validates each typed `@Payload @Valid` argument before invoking the listener. Their decorators record delivery attempts and outcomes. The Kafka recovery callbacks record failures and dead-letter delivery.
+
+Directory and Reservations map database rows to plain Java domain objects. Hibernate validates the tables that Liquibase creates. The [command journal row](reservation-service/src/main/java/study/locker/reservation/adapter/persistence/CommandRow.java) implements Spring Data’s `Persistable` because the caller supplies its composite key before insertion. A new entry is inserted directly. Persistence and load callbacks mark existing entries. Booking creation uses PostgreSQL’s atomic conflict handling to protect the last available compartment, and PostgreSQL generates the outbox sequence.
+
+Run `./mvnw test` to check the [ArchUnit onion rules](locker-verification/src/architecture-test/java/study/architecture/OnionRules.java) against production classes and test classes in every module. Put domain tests alongside the domain package and adapter tests alongside their adapter. Service integration tests that wire several adapters together belong in the service’s `integration` test package.
+
+### Asynchronous delivery
+
+State changes and outbox rows commit together. The relay publishes with the reservation ID as the Kafka key and deletes rows after Kafka acknowledges them. A crash between acknowledgment and database commit can lead to redelivery.
+
+| Kafka topic | Consumer group | Effect |
+| --- | --- | --- |
+| `locker.lifecycle.v1` | `locker-receipts-v1` | Conditionally creates `locker-audit/receipts/{reservationId}/{eventId}.json`. Identical replays succeed. A conflicting event ID leaves the original receipt intact. |
+| `locker.pickup-mail.v1` | `locker-notifications-v1` | Decrypts a pickup code for delivery to the verified customer email. Expired messages are discarded. |
+
+The default pickup policy expires a code after 15 minutes and locks it after five failed attempts. Reissue resets the counter and invalidates the old code. PostgreSQL stores a keyed verifier. The mail job carries an AES-GCM envelope. Public responses and audit receipts omit the code. SMTP delivery is at least once. A crash after SMTP accepts a message can cause a duplicate email with the same event identity.
+
+Both workers validate decoded version-1 events before delivery. An invalid field sends the original record directly to the source topic plus `.dlt`. Validation diagnostics identify the fields. Malformed JSON, conflicting receipts and permanently rejected recipients go directly to the dead-letter topic. An unavailable destination pauses the listener with its offset pending. For a receipt conflict, compare the dead-letter event with the receipt at the event’s key before replay. For expired pickup mail, request a fresh code. Kafka and storage use one instance each in the local lab.
+
+### Pickup key operations
+
+Reservations calls Vault Transit over TLS to encrypt each pickup email and compute HMACs. The email event ID is authenticated with the ciphertext. The notification worker can decrypt that envelope. Each service has its own Vault policy. Compose authenticates them with AppRole and kind uses projected Kubernetes service-account tokens. Spring Cloud Vault manages their sessions.
+
+| Transit key | Purpose | Existing data that requires old versions |
+| --- | --- | --- |
+| `pickup-mail` | Encrypt and decrypt the pickup code | Queued or replayed pickup emails |
+| `pickup-verifier` | Check a submitted code | Active deposited reservations |
+| `command-fingerprint` | Check whether an idempotency key was reused with the same input | Saved command results, including failed attempts |
+
+Rotate any one key independently. New writes use its latest version. Keep earlier versions available while their records can still be read or replayed.
 
 ```bash
-./mvnw -pl parcel-api -Dit.test=Week01ParcelIT verify
+./scripts/vault-lab rotate compose pickup-mail
+./scripts/vault-lab rotate kind command-fingerprint
 ```
 
-Start with `createReturns201AndLocationThatRetrievesThePersistedParcel`. On the starter it expects **201 Created** and receives **405 Method Not Allowed**. Implement `POST /parcels` in [ParcelController.java](parcel-api/src/main/java/study/parcel/ParcelController.java). The test sends the JSON below, then retrieves the saved parcel using the response’s `Location` header.
+**First upgrade.** Use `./scripts/compose up -d` or `./scripts/kind-deploy`. The bootstrap imports the original pickup key and the historical mail key so the new services can read old records without rewriting them. It briefly stops Reservations and Notifications to save a PostgreSQL dump, retained pickup-mail records, partition offsets, consumer offsets and the original key under `.lab/vault/<target>/pre-transit/`. Once the new services have written versioned records, rolling back to the old application requires restoring the matching pre-upgrade data as well.
 
-```json
-{"trackingId":"P-201","status":"IN_TRANSIT","destination":"Leeds"}
-```
+**Restart and recovery.** Compose keeps Vault data in the `locker-vault` volume and kind uses PVC `data-vault-0`. Back up that storage while Vault is stopped and keep a separate protected copy of `.lab/vault/<target>/`, which includes administrator credentials, the unseal share and TLS material. Restore the matching storage and recovery material together. The lab runs one Vault instance and a helper that automatically supplies one unseal share after restart. Anyone with the recovery file can administer that installation.
 
-To repeat that method, add its name to the Failsafe filter.
+**During an outage.** A command that needs Vault rolls back and returns gRPC `UNAVAILABLE`. Retry with the original request ID. The notification worker retains its Kafka offset and retries decryption when Vault returns, subject to the pickup code’s expiry. Compose defaults to a 500 ms connect timeout and a 1,000 ms read timeout. Set `LOCKER_VAULT_CONNECT_TIMEOUT_MS` and `LOCKER_VAULT_READ_TIMEOUT_MS` to override them. The equivalent Helm values are `vault.connectTimeoutMs` and `vault.readTimeoutMs`.
+
+[Vault Transit](https://developer.hashicorp.com/vault/docs/secrets/transit) · [Importing existing keys](https://developer.hashicorp.com/vault/docs/commands/transit/import) · [Spring Cloud Vault authentication](https://docs.spring.io/spring-cloud-vault/reference/authentication.html)
+
+### Resilience and recovery
+
+**Lost reply.** Each gateway charges the caller once per business operation. It can replay a read or a command carrying a valid request UUID once on a transient gRPC `UNAVAILABLE`, reusing the caller, UUID and payload. Spring’s `RetryTemplate` fits the jittered backoff and both attempts within one gRPC deadline. Directory receives one attempt per incoming request. A committed reservation or a failed pickup attempt is recovered from the command journal on replay.
+
+**Unavailable or busy dependency.** Spring’s `@ConcurrencyLimit` bounds concurrent wire attempts per dependency and rejects excess calls immediately. A retry releases its permit during backoff. Resilience4j’s `@CircuitBreaker` counts one outcome per logical call over a rolling window. Directory-origin failures carry internal metadata so a Directory outage leaves reservation lookups available. The REST API returns 503 for dependency unavailability or saturation and 504 for an expired deadline. GraphQL exposes the gRPC code in `errors[].extensions.code`, and SOAP returns it in the fault detail.
+
+**Caller quota.** All gateways and replicas use Bucket4j and Valkey to share one token bucket per authenticated issuer and subject. Each business field in a GraphQL query costs one token. On exhaustion, REST returns 429 and a `Retry-After` header in seconds. GraphQL and SOAP return `RESOURCE_EXHAUSTED`. The quota excludes health probes and internal retries. If Valkey times out, each gateway switches to a smaller local bucket until connectivity returns. During fallback the total allowance depends on the number of replicas. Quota buckets are ephemeral. Restarting Valkey or changing a shared budget starts a fresh bucket.
+
+**Delivery outage.** S3 gets one SDK attempt per delivery and SMTP has bounded connect, read and write timeouts. Spring Kafka owns redelivery. After the short retries, the listener pauses between probes while Kafka retains its offset. Other partitions assigned to that listener can wait with it. The other worker runs independently. On recovery the receipt worker resumes conditional writes and the mail worker checks the code's expiry again. The outbox retains unacknowledged Kafka publications with their original event IDs.
+
+| Environment setting | Lab default | Effect |
+| --- | --- | --- |
+| `LOCKER_GATEWAY_CAPACITY` / `LOCKER_DIRECTORY_CAPACITY` | 8 / 4 | Concurrent calls per gateway to Reservations and per Reservations instance to Directory. In Helm set `LOCKER_RPC_CAPACITY` on the caller. |
+| `LOCKER_RPC_WINDOW` / `LOCKER_RPC_MINIMUM` / `LOCKER_RPC_THRESHOLD` | 20 / 10 / 50 | Window size, minimum measured calls, and failure percentage to open a breaker. |
+| `LOCKER_RPC_OPEN` / `LOCKER_RPC_PROBES` | 10s / 2 | Open interval and number of half-open probes. |
+| `LOCKER_RPC_RETRY` / `LOCKER_RPC_BACKOFF` | true / 100ms | Enable gateway replay and set its base delay. Jitter ranges from half to one and a half times this delay. |
+| `LOCKER_QUOTA_URI` / `LOCKER_QUOTA_TIMEOUT` | redis://valkey:6379 / 100ms | Shared store address and check timeout. |
+| `LOCKER_QUOTA_RATE` / `LOCKER_QUOTA_BURST` | 120 / 60 | Tokens replenished per minute and maximum accumulated tokens per caller. Set the same values on each gateway. |
+| `LOCKER_QUOTA_LOCALRATE` / `LOCKER_QUOTA_LOCALBURST` / `LOCKER_QUOTA_CACHESIZE` | 20 / 10 / 10000 | Local fallback rate per minute, burst and maximum cached identities per gateway. |
+| `LOCKER_DELIVERY_RETRY_PROBE` | 10s | Pause between destination recovery attempts after short retries are exhausted. |
+| `LOCKER_RECEIPTS_TIMEOUT` / `SPRING_MAIL_PROPERTIES_MAIL_SMTP_WRITETIMEOUT` | 5s / 5000 ms | Total S3 API-call timeout and SMTP write timeout. |
+
+#### Run the local outage drill
+
+Start `./scripts/manual-lab up`, then run **`./scripts/manual-lab resilience-drill`** with one free compartment. The drill discards a reservation reply, replays the command, stops Directory, pauses S3 and pauses Valkey in turn. It checks that the booking remains readable, its cancellation receipt catches up, and quota enforcement recovers. It restores the affected containers on exit. In Grafana's Locker overview, the breaker states are 0 closed, 1 half-open and 2 open. Follow the gRPC rejections, worker delivery outcomes, consumer lag and quota fallback alongside the terminal output.
+
+## Tests and operating exercises
 
 ```bash
-./mvnw -pl parcel-api '-Dit.test=Week01ParcelIT#createReturns201AndLocationThatRetrievesThePersistedParcel' verify
+./mvnw clean verify        # Surefire, Failsafe and disposable Testcontainers dependencies
+./scripts/compose-verify   # Real public endpoints, mail delivery and S3 receipts
+./scripts/install-tools    # Verified kind, kubectl and Helm binaries under .lab/bin
+./scripts/kind-deploy      # Creates or updates the dedicated lockers-lab cluster
+./scripts/kind-verify      # Starts temporary loopback forwards and runs the same public suite
+./scripts/release-drill    # Exercises CPU scaling, failed readiness and a Helm rollback
 ```
 
-| Week and JUnit suite | What to demonstrate |
+The first kind deployment builds a Kubernetes v1.37.3 node image. Set `KIND_NODE_IMAGE` to use an available compatible image instead. The Helm chart installs into the `lockers` namespace. Internal gRPC services have cluster-local addresses. To inspect this deployment, use the scoped kubeconfig.
+
+```bash
+export PATH="$PWD/.lab/bin:$PATH" KUBECONFIG="$PWD/.lab/locker-kubeconfig"
+kubectl -n lockers get deployments,pods,svc
+helm -n lockers history lockers
+```
+
+For the rollout drill, the REST CPU target is 45% of its 100 millicore request, with two to four replicas. The script generates authenticated availability calls, records errors and sampled p95 latency, checks the ready EndpointSlices during a bad rollout, and restores the starting Helm revision. The traffic generator uses a port-forward to one REST pod. The readiness check also makes a request through the cluster Service. Results are written to the terminal and `.lab/drill-traffic.log`.
+
+| Week | Exercise and evidence |
 | --- | --- |
-| 1 · [Parcel creation](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java) | Persist a parcel, follow its location, preserve the original read behavior, handle concurrent duplicates, and reject invalid or oversized input. |
-| 2 · [API security](parcel-api/src/test/java/study/parcel/Week02SecurityIT.java) | Accept a reader, deny an observer, validate signatures and claims, and allow browser preflight. |
-| 3 · [SOAP carrier](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java) | Refactor the [carrier adapter](parcel-api/src/main/java/study/parcel/CarrierClient.java) to call a WSDL-generated Apache CXF client. Map the declared fault, preserve unexpected errors, and bound the wait for a stalled carrier. |
-| 4 · [Shipment delivery](shipment-worker/src/test/java/study/parcel/Week04DeliveryIT.java) | Write one receipt per event under concurrent delivery or replay and recover from a failed write. |
-| 5 · [Backup and restore](shipment-worker/src/test/java/study/parcel/Week05RestoreIT.java) | Restore two dataset sizes three times each, verify SHA-256 digests, record timings and preserve an existing receipt. |
-| 6 · [Kubernetes readiness](release-lab/src/test/java/study/parcel/Week06ReleaseIT.java) | Change the region, pause readiness on one live replica, and verify traffic reaches only ready endpoints. Run locally while the replica is paused. |
-| 7 · [Scaling and rollback](release-lab/src/test/java/study/parcel/Week07OperationsIT.java) | Generate CPU load with the HPA enabled, deploy a bad revision, then roll back. Run locally after recovery while scaling events remain available. |
-| 8 · [SQL query plan](parcel-api/src/test/java/study/parcel/Week08SqlIT.java) | Return the same 100 Bath parcels with fewer PostgreSQL shared-buffer accesses than the sequential-scan baseline. Apply the index on a fresh database. |
+| 1 | Persist a reservation and race eight callers for one compartment. Follow the unique-index and idempotency assertions in [ReservationBookIT](reservation-service/src/test/java/study/locker/reservation/integration/ReservationBookIT.java). |
+| 2 | Compare owner and courier permissions, JWT claims and an allowed and denied browser preflight in [LockerJourneyIT](locker-verification/src/test/java/study/locker/verification/LockerJourneyIT.java). |
+| 3 | Follow one reservation across all three public contracts. Inspect gRPC caller propagation, an unavailable service and a stalled lookup in [GrpcBoundaryTest](locker-edge/src/test/java/study/locker/edge/integration/GrpcBoundaryTest.java). |
+| 4 | Reproduce a broker outage and lost commit in the reservation suite. Verify duplicate events and dead-letter recovery with Kafka and S3 in [ReceiptDeliveryIT](receipt-worker/src/test/java/study/locker/receipt/integration/ReceiptDeliveryIT.java). |
+| 5 | Back up receipts, repeat the restore, and detect a damaged copy in the cross-protocol journey. Use [ReceiptArchive](locker-verification/src/main/java/study/locker/verification/ReceiptArchive.java) on a completed reservation. |
+| 6 | Inspect startup, readiness and liveness probes in the [Helm deployment](deploy/locker/templates/apps.yaml). Observe the unready replacement and check which pods receive traffic. |
+| 7 | Run the release drill. Compare ready replica counts and p95 under load, then inspect the healthy revision after rollback. |
+| 8 | Review the scoped occupancy lookup in [BookingRows](reservation-service/src/main/java/study/locker/reservation/adapter/persistence/BookingRows.java). Its PostgreSQL test compares indexed and sequential `EXPLAIN (ANALYZE, BUFFERS)` plans on the same 40,000 historical bookings and checks for identical results and fewer buffers. |
 
-The Week 1 H2 tests exercise HTTP and persistence with security filters disabled. The Week 2 H2 suite runs the real filter chain and provides an ephemeral RSA public key through `spring.security.oauth2.resourceserver.jwt.public-key-location`. Use that property in your decoder. The issuer is `urn:parcel:study`, the audience is `parcel-api`, and the scopes are `parcel.read` and `parcel.observe`.
-
-Weeks 1, 4, 5 and 8 use Testcontainers with a running Docker engine. Weeks 6 and 7 read the dedicated kind cluster created by the release quick start below. The tests use the Kubernetes API to read the Helm release history and sample traffic through the Service proxy. Remove the weekly `@Disabled` annotation to enable either suite locally. Keep the GitHub Actions condition on both classes.
-
-### Continuous integration
-
-[GitHub Actions](.github/workflows/ci.yml) uses the official Eclipse Temurin 25 JDK container to run `./mvnw --batch-mode --no-transfer-progress --fail-at-end verify` for pull requests targeting `main`, pushes to `main`, and manual runs. An enabled failing test fails the build. Open the run’s **junit-reports** artifact for Surefire and Failsafe XML, including failures and skips. Locally the same files are under each module’s `target/surefire-reports/` and `target/failsafe-reports/`.
-
-## Start with the parcel API
-
-Use macOS or Linux with Docker Compose, Bash, curl, tar and shasum. Run `sdk env` from the project root before starting a lab in a new terminal. The browser, token and carrier exercises also use Python 3.15.2 and OpenSSL. All services run locally.
-
-Run these commands from the folder containing this README.
+To make an offline archive of one completed reservation, use the S3 endpoint exposed by `compose-verify`. Wait until its final receipt is present. The destination directory must be new. These credentials are the fixed values accepted by the lab emulator.
 
 ```bash
-cd parcel-api
-docker compose up -d --wait
-../mvnw clean package
-java -jar target/parcel-api-1.0.0.jar
+export AWS_ACCESS_KEY_ID=lab AWS_SECRET_ACCESS_KEY=lab
+./scripts/with-stack-env ./mvnw -pl locker-verification compile org.codehaus.mojo:exec-maven-plugin:3.5.0:java \
+  -Dexec.mainClass=study.locker.verification.ReceiptArchive \
+  "-Dexec.args=backup $RESERVATION_ID ./receipt-backup"
 ```
 
-In a second terminal, run `curl -i http://127.0.0.1:18081/parcels/P-100`. Expect HTTP 200 with status `IN_TRANSIT`. Your first change is to let a caller create another parcel and retrieve it at the URL returned by the API.
+Replace `backup` with `restore` to restore the same reservation. Restore verifies the manifest against every local file before writing, preserves an identical existing receipt and reports a conflict if its content differs. The automated drill restores into an isolated prefix and removes its temporary objects.
 
-## Weeks 1–3 · Parcel Tracking API
-
-Start in the [parcel controller](parcel-api/src/main/java/study/parcel/ParcelController.java) and its [HTTP tests](parcel-api/src/test/java/study/parcel/ParcelApiTest.java).
-
-- [x] **Week 1 — Create and version a resource.** Implement `POST /parcels` with a caller-supplied tracking ID. Validate the input, enforce uniqueness in PostgreSQL, and decide how the API handles duplicates. Add an optional response field and run the original client test again. **Done when** a test creates a parcel, follows its `201 Created` response’s `Location` header, and reads the same parcel. Cover invalid input and a repeated ID. Explain the API’s Richardson maturity level and one change that would need a version migration.
-- [x] **Week 2 — Secure a lookup.** Add Spring Security JWT validation for signature, issuer, audience, expiry and read scope. Use the [token fixture](parcel-api/fixtures/token.py) to generate reader and observer tokens. From `parcel-api`, serve the [browser client](parcel-api/browser/index.html) with `python3 -m http.server 18082 --bind 127.0.0.1 --directory browser`. Allow that origin and inspect the preflight in DevTools. **Done when** tests show 200 for a reader, 401 for a missing or invalid token, and 403 for an authenticated observer. Save a redacted browser trace that explains a denied origin and map two controls to OWASP risks.
-- [x] **Week 3 — Integrate a SOAP carrier with Apache CXF.** Replace the handwritten HTTP and XML in `CarrierClient` with a call to the generated carrier port. Keep the existing `track(URI, String)` API. **Done when** the adapter delegates SOAP handling to CXF and the Week 3 suite passes against a local carrier.
-
-The Week 1 API fits Richardson level 2. Clients use resource URLs, HTTP methods, and status codes. For example, `POST /parcels` returns `201 Created` with a `Location` for the next `GET`. Adding `createdAt` preserved the original client. Renaming `trackingId` would break clients that read it and would require a version migration. [Week 1 compatibility tests](parcel-api/src/test/java/study/parcel/Week01ParcelIT.java)
-
-### Week 3 checkpoints
-
-1. **Generate the Java contract.** From the repository root, run `./mvnw -pl parcel-api generate-sources`. Open `parcel-api/target/generated-sources/cxf/study/parcel/carrier/Carrier.java` and find `String track(String body) throws Missing`. Compare it with the WSDL's `Track` operation and `UnknownParcel` fault. Maven regenerates these files on a clean build. [Carrier WSDL](parcel-api/fixtures/carrier.wsdl) · [CXF Maven code generation](https://cxf.apache.org/docs/maven-cxf-codegen-plugin-wsdl-to-java.html)
-2. **Call the generated port.** Start with `generatedPortReadsTheStatusAndRaisesTheDeclaredFault` in the [Week 3 suite](parcel-api/src/test/java/study/parcel/Week03CarrierIT.java). It shows how to get the port from `Carrier_Service`, point it at the supplied endpoint through `BindingProvider`, and call `track`. Use the same approach in the adapter. The generated service loads the packaged WSDL. JUnit starts the carrier on a random loopback port.
-3. **Translate the result.** Return the status on success. Catch the generated `Missing` exception for an unknown parcel and return `Optional.empty()`. Surface unexpected SOAP faults and transport failures as `IOException`, retaining the original exception as the cause. A malformed reply or missing `TrackResponse` must also raise `IOException`. Start with `preserveTheUndeclaredSoapFaultAsTheCauseOfAnIoError` to see what the handwritten adapter loses.
-4. **Bound the wait.** Configure connection and receive timeouts on the CXF HTTP conduit, and release client resources when finished. The stall test opens a socket that never answers. The adapter must report an I/O error within five seconds. [CXF HTTP transport](https://cxf.apache.org/docs/client-http-transport-including-ssl-support.html)
-
-**Hint for the wrong-namespace test.** CXF can match a fault by its local name when its full XML name fails to match. An `UnknownParcel` from `urn:other` must still surface as an error. One approach is an inbound fault interceptor that runs after `Soap11FaultInInterceptor` and before `ClientFaultConverter`. Inspect the parsed detail and set `ClientFaultConverter.DISABLE_FAULT_MAPPING` on that message if the namespace is unexpected. [CXF fault conversion](https://github.com/apache/cxf/blob/cxf-4.2.4/core/src/main/java/org/apache/cxf/interceptor/ClientFaultConverter.java#L94-L138)
-
-Run the contract example, then the full Week 3 suite from the repository root. Both commands use the JUnit carrier fixture.
-
-```bash
-./mvnw -pl parcel-api '-Dit.test=Week03CarrierIT#generatedPortReadsTheStatusAndRaisesTheDeclaredFault' verify
-./mvnw -pl parcel-api -Dit.test=Week03CarrierIT verify
-```
-
-For the protocol comparison, run `./parcel-api/grpc-demo.sh` and record one client scenario and a reason to choose each of SOAP, REST, GraphQL, gRPC, and messaging. For a manual SOAP lookup, `python3 parcel-api/fixtures/carrier.py` serves the carrier on port 18083.
-
-## Weeks 4–5 · Shipment Event Processor
-
-Open a terminal at the project root. Start the emulators and follow one event through the [worker](shipment-worker/src/main/java/study/parcel/Worker.java).
-
-```bash
-cd shipment-worker
-docker compose up -d
-../mvnw clean package
-./worker.sh init
-./worker.sh send fixtures/delivered.json
-./worker.sh once
-./worker.sh list
-```
-
-On a fresh stack, expect one receipt under `receipts/evt-7/`. If the emulators are still starting, repeat `./worker.sh init`.
-
-- [ ] **Week 4 — Make redelivery safe.** Send the fixture again, run `./worker.sh once --interrupt`, wait six seconds, then run `./worker.sh once`. Inspect the extra receipt keys. Change the worker so replaying the same business event is safe, including after a successful write followed by a crash. Decide how to handle conflicting payloads for one ID. **Done when** two deliveries of the same event produce one business result, two different IDs produce two, and a failed write leaves the message available for retry.
-- [ ] **Week 5 — Prove recovery and choose cloud services.** Set a recovery-time objective and a tolerable data-loss window. Run `./worker.sh restore fixtures/delivered.json`, then repeat with a larger synthetic file. Compare at least three runs. Sketch an AWS and an Azure design covering compute, queue, database, object/block/shared-file storage, identity and backup. **Done when** you can show matching checksums, measured recovery times, and whether you met your objective. Trace one access requirement to a control and name the live-provider test that would prove it.
-
-## Weeks 6–7 · Kubernetes Release and Recovery
-
-Open a terminal at the project root. Deploy the supplied [Helm chart](release-lab/chart/) and sample traffic from inside the cluster.
-
-```bash
-cd release-lab
-./install-tools.sh
-source ./tools.sh
-./cluster.sh up
-./deploy.sh
-./load.sh track 3
-```
-
-Run `source ./tools.sh` from `release-lab` in each additional terminal so Helm and kubectl use this lab’s cluster.
-
-- [ ] **Week 6 — Build and inspect a release.** Compare the [multistage Dockerfile](release-lab/Dockerfile) with a Spring Boot buildpack image built from the same source. Inspect size, layers and runtime UID. Change the Helm `region` value and check `/track`. On one pod, create `/tmp/parcel-study-paused`, wait for readiness to turn false, sample traffic, then remove the file. **Done when** you can show the region changed with the same application image and the live, unready pod stopped receiving new connections. Explain the three probes and identify which Twelve-Factor practices the service demonstrates.
-- [ ] **Week 7 — Measure scaling and roll back.** Run `./cluster.sh metrics`, then `helm upgrade parcel chart --reuse-values --set autoscale=true`. Run `./load.sh work 110 6` while watching `kubectl get hpa -w`. Compare Service traffic with a single port-forward. Record the healthy Helm revision, set `accepting=false` in a new revision, inspect pod readiness and events, and roll back. **Done when** you can show replica counts, p95 latency and errors during load, plus successful requests after rollback. Explain when request rate or queue age would be a better scaling signal than CPU.
-
-## Week 8 · Diagnose and defend
-
-- [ ] **Tune a measured bottleneck.** Return to `parcel-api`, load the [SQL fixture](parcel-api/fixtures/profile.sql), and exercise `GET /parcels?destination=Bath`. Capture a Java Flight Recorder profile and an `EXPLAIN (ANALYZE, BUFFERS)` plan. Change one index or query and repeat with the same data and request count. **Done when** you can explain the before-and-after numbers and the trade-off your change introduced.
-- [ ] **Make the work reproducible.** Document a shared IDE run configuration and verify the build from a clean checkout. For a customer distribution of this application, inspect the Spring Boot dependency’s licence and notices and record the obligations. **Done when** another developer can reproduce your run and follow your licence decision.
-- [ ] **Prepare the assessment.** For each required skill (Cloud Fundamentals, Java Security, Java Web Development, Java Cloud, and Java Containerization & Orchestration), record one decision, the test or measurement that supports it, and what still needs live-cloud evidence. Do the same for the recommended Software Engineering Knowledge & Experience skill.
-
-## Evidence and cleanup
-
-Keep the test output, redacted trace or measurements that support each checked box. If you use AI, first predict the outcome yourself. Then ask it to challenge your reasoning or suggest a missing test. Finish by reproducing the result and explaining it unaided.
-
-Stop foreground services with Ctrl-C. From either Compose project, `docker compose down -v` removes that project’s containers and disposable data. From `release-lab`, `./cluster.sh down` removes the local cluster. Save your evidence first.
+Use a feature branch for changes and target `main` in pull requests. [GitHub Actions](.github/workflows/ci.yml) uses the Maven Wrapper in a pinned Temurin 25 image. It runs JUnit with Surefire and Failsafe, starts the Compose stack, runs the public acceptance suite, and uploads the XML reports.

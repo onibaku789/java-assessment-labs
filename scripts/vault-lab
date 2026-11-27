@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Provision the two local Vault installations. Secret values travel over stdin."""
+import argparse
+import base64
+import fcntl
+import hmac
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+os.chdir(ROOT)
+os.umask(0o077)
+parser = argparse.ArgumentParser()
+parser.add_argument("action", choices=("prepare", "configure", "rotate"))
+parser.add_argument("target", choices=("compose", "kind"))
+parser.add_argument("key", nargs="?", choices=("pickup-mail", "pickup-verifier", "command-fingerprint"))
+args = parser.parse_args()
+if (args.action == "rotate") != (args.key is not None):
+    parser.error("supply a key only for rotate")
+state = ROOT / ".lab/vault" / args.target
+state.mkdir(parents=True, exist_ok=True)
+lock = (state / ".lock").open("a")
+fcntl.flock(lock, fcntl.LOCK_EX)
+
+
+def atomic(path, contents, mode=0o600):
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+        tmp.write(contents.encode())
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        os.fchmod(tmp.fileno(), mode)
+    os.replace(tmp.name, path)
+
+
+def prepare():
+    # A non-root container sees only its bind mount. The host parent remains owner-only.
+    for name in ("tls", "unseal", "reservations", "notifications"):
+        folder = state / name
+        folder.mkdir(exist_ok=True)
+        folder.chmod(0o755)
+    tls = state / "tls"
+    if not (tls / "server.crt").exists():
+        with tempfile.TemporaryDirectory(dir=state) as tmp:
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:3072", "-nodes", "-days", "3650",
+                            "-subj", "/CN=vault", "-addext", "subjectAltName=DNS:vault,IP:127.0.0.1",
+                            "-keyout", f"{tmp}/server.key", "-out", f"{tmp}/server.crt"], stderr=subprocess.DEVNULL, check=True)
+            for name in ("server.key", "server.crt"):
+                os.replace(Path(tmp) / name, tls / name)
+                (tls / name).chmod(0o644)
+    if not (tls / "trust.p12").exists():
+        # Only the public certificate goes into the Java trust store.
+        subprocess.run(["keytool", "-importcert", "-noprompt", "-alias", "locker-vault",
+                        "-file", str(tls / "server.crt"), "-keystore", str(tls / "trust.p12"),
+                        "-storetype", "PKCS12", "-storepass", "changeit"], check=True)
+        (tls / "trust.p12").chmod(0o644)
+
+
+def remote(command, data="", check=True):
+    if args.target == "compose":
+        prefix = ["docker", "compose", "--env-file", ".lab/keys/database.env", "exec", "-T", "vault"]
+    else:
+        prefix = [".lab/bin/kubectl", "--kubeconfig=.lab/locker-kubeconfig", "-n", "lockers",
+                  "exec", "-i", "vault-0", "-c", "vault", "--"]
+    result = subprocess.run(prefix + command, input=data, text=True, capture_output=True, timeout=40)
+    if check and result.returncode:
+        raise SystemExit(f"Vault bootstrap failed ({command[-1].split('/')[0]}): {result.stderr.strip()}")
+    return result
+
+
+def authenticated(token, command, data="", check=True):
+    wrapper = 'IFS= read -r VAULT_TOKEN; export VAULT_TOKEN; exec "$@"'
+    return remote(["sh", "-ec", wrapper, "vault-lab", *command], token + "\n" + data, check)
+
+
+def configure():
+    for _ in range(90):
+        status = remote(["vault", "status", "-format=json"], check=False)
+        if status.returncode in (0, 2) and status.stdout.strip():
+            break
+        time.sleep(1)
+    else:
+        raise SystemExit("Vault did not start")
+    recovery = state / "recovery.json"
+    initialized = json.loads(status.stdout)["initialized"]
+    if not initialized:
+        if recovery.exists():
+            raise SystemExit("Vault storage is empty but recovery material exists. Restore the persisted Vault storage.")
+        init = remote(["vault", "operator", "init", "-key-shares=1", "-key-threshold=1", "-format=json"])
+        atomic(recovery, init.stdout)
+    if not recovery.is_file():
+        raise SystemExit("Restore the lab's Vault recovery file before continuing.")
+    credentials = json.loads(recovery.read_text())
+    share = credentials["unseal_keys_b64"][0]
+    atomic(state / "unseal/share", share, 0o444)
+    if status.returncode == 2:
+        remote(["vault", "write", "sys/unseal", "-"], json.dumps({"key": share}))
+    token = credentials["root_token"]
+    backend = "approle" if args.target == "compose" else "kubernetes"
+    authenticated(token, ["sh", "/run/vault-config/vault-configure.sh", backend])
+    legacy = historical_key()
+    if legacy.exists():
+        import_legacy(token, base64.b64decode(legacy.read_text().strip(), validate=True))
+    if backend == "approle":
+        for name in ("reservations", "notifications"):
+            issue_approle(token, name)
+    print(f"Vault Transit ready for {args.target}")
+
+
+def historical_key():
+    saved = state / "pre-transit/pickup.key"
+    if saved.exists():
+        return saved
+    if args.target == "compose":
+        return ROOT / ".lab/keys/pickup.key"
+    # Older Helm releases mounted this Secret. Its value belongs to this cluster.
+    pending = state / "legacy-pickup.key"
+    command = [".lab/bin/kubectl", "--kubeconfig=.lab/locker-kubeconfig", "-n", "lockers",
+               "get", "secret", "locker-config", "--ignore-not-found", "-o", r"jsonpath={.data.pickup\.key}"]
+    encoded = subprocess.check_output(command).strip()
+    if encoded:
+        atomic(pending, base64.b64decode(encoded, validate=True).decode())
+    return pending
+
+
+def import_legacy(token, master):
+    if len(master) != 32:
+        raise SystemExit("Invalid historical pickup key")
+    mail = hmac.digest(master, b"locker-mail-key-v1", "sha256")
+    for name, kind, key in (("legacy-mac", "hmac", master), ("legacy-mail", "aes256-gcm96", mail)):
+        path = "transit/keys/" + name
+        if authenticated(token, ["vault", "read", path], check=False).returncode:
+            authenticated(token, ["vault", "transit", "import", path, "@/dev/stdin", "type=" + kind],
+                          base64.b64encode(key).decode())
+    # Detect a wrong historical key even when restarting a partially completed import.
+    probe = b"locker-vault-migration"
+    b64 = lambda data: base64.b64encode(data).decode()
+    payload = {"input": b64(probe), "hmac": "vault:v1:" + b64(hmac.digest(master, probe, "sha256"))}
+    response = authenticated(token, ["vault", "write", "-format=json", "transit/verify/legacy-mac", "-"], json.dumps(payload))
+    if not json.loads(response.stdout)["data"]["valid"]:
+        raise SystemExit("Existing Vault legacy key differs from the installation's pickup key")
+
+
+def issue_approle(token, name):
+    folder = state / name
+    prefix = "spring.cloud.vault.app-role."
+    role_id = authenticated(token, ["vault", "read", "-field=role_id", f"auth/approle/role/{name}/role-id"]).stdout
+    atomic(folder / (prefix + "role-id"), role_id.strip(), 0o444)
+    secret = folder / (prefix + "secret-id")
+    if not secret.exists():
+        value = authenticated(token, ["vault", "write", "-f", "-field=secret_id", f"auth/approle/role/{name}/secret-id"])
+        atomic(secret, value.stdout.strip(), 0o444)
+
+
+if args.action == "rotate":
+    token = json.loads((state / "recovery.json").read_text())["root_token"]
+    authenticated(token, ["vault", "write", "-f", f"transit/keys/{args.key}/rotate"])
+    print(f"Rotated {args.key} on {args.target}")
+else:
+    prepare()
+    if args.action == "configure":
+        configure()

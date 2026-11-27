@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN" "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<module name="Checker">
+    <module name="BeforeExecutionExclusionFileFilter">
+        <property name="fileNamePattern" value="[/\\]target[/\\]generated-(?:test-)?sources[/\\]"/>
+    </module>
+    <module name="TreeWalker">
+        <module name="CyclomaticComplexity">
+            <property name="max" value="7"/>
+        </module>
+        <module name="ClassFanOutComplexity">
+            <property name="max" value="15"/>
+        </module>
+        <module name="JavaNCSS">
+            <property name="methodMaximum" value="30"/>
+            <property name="classMaximum" value="150"/>
+            <!-- Size is enforced on methods and types, independent of file layout. -->
+            <property name="fileMaximum" value="2147483647"/>
+        </module>
+    </module>
+</module>

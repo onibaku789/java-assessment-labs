@@ -1,0 +1,25 @@
+local.file_match "lockers" {
+  path_targets = [{"__path__" = "/logs/*.json", "job" = "lockers"}]
+  sync_period = "2s"
+}
+loki.source.file "lockers" {
+  targets = local.file_match.lockers.targets
+  forward_to = [loki.relabel.service.receiver]
+}
+loki.relabel "service" {
+  forward_to = [loki.write.local.receiver]
+  rule {
+    source_labels = ["filename"]
+    regex = ".*/([^/]+)[.]json"
+    target_label = "service"
+  }
+  rule {
+    action = "labeldrop"
+    regex = "filename"
+  }
+}
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# One-time checkpoint of the legacy installation before deploying Transit writers.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+umask 077
+target=${1:?compose or kind}
+state=".lab/vault/$target"
+backup="$state/pre-transit"
+[[ ! -d "$backup" ]] || exit 0
+legacy=.lab/keys/pickup.key
+compose=(docker compose --env-file .lab/keys/database.env)
+k=(.lab/bin/kubectl --kubeconfig=.lab/locker-kubeconfig -n lockers)
+case "$target" in
+  compose)
+    volume=$("${compose[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["volumes"]["locker-db"]["name"])')
+    docker volume inspect "$volume" >/dev/null 2>&1 || exit 0
+    "${compose[@]}" up -d --wait postgres kafka
+    db=("${compose[@]}" exec -T postgres)
+    broker=("${compose[@]}" exec -T kafka)
+    ;;
+  kind)
+    "${k[@]}" get pvc data-postgres-0 >/dev/null 2>&1 || exit 0
+    legacy="$state/legacy-pickup.key"
+    db=("${k[@]}" exec postgres-0 --)
+    broker=("${k[@]}" exec kafka-0 --)
+    ;;
+  *) exit 2 ;;
+esac
+if [[ ! -f "$legacy" ]]; then
+    sql=("${db[@]}" psql -XAt -v ON_ERROR_STOP=1 -U postgres -d lockers -c)
+    journal=$("${sql[@]}" "select to_regclass('reservations.command_result') is not null")
+    if [[ "$journal" == t ]]; then
+        old=$("${sql[@]}" "select exists(select from reservations.command_result where fingerprint not like 'vault:%')")
+        if [[ "$old" == t ]]; then
+            echo "Historical reservations exist. Restore the original pickup key for $target before upgrading." >&2
+            exit 1
+        fi
+    fi
+    exit 0
+fi
+
+tmp=$(mktemp -d "$state/checkpoint.XXXXXX")
+apps=()
+counts=()
+on_exit() {
+    local code=$?
+    if (( code != 0 )); then
+        if [[ "$target" == compose && ${#apps[@]} -gt 0 ]]; then
+            "${compose[@]}" start "${apps[@]}"
+        elif [[ "$target" == kind ]]; then
+            for i in "${!apps[@]}"; do
+                "${k[@]}" scale "deployment/${apps[i]}" --replicas="${counts[i]}"
+            done
+        fi
+        echo "Checkpoint failed. Partial backup retained at $tmp." >&2
+    fi
+}
+if [[ "$target" == compose ]]; then
+    running=$("${compose[@]}" ps --services --status running reservations notifications)
+    while IFS= read -r app; do [[ -z "$app" ]] || apps+=("$app"); done <<<"$running"
+    trap on_exit EXIT
+    "${compose[@]}" stop reservations notifications
+else
+    for app in reservations notifications; do
+        counts+=("$("${k[@]}" get deployment "$app" -o jsonpath='{.spec.replicas}')")
+        apps+=("$app")
+    done
+    trap on_exit EXIT
+    "${k[@]}" scale deployment reservations notifications --replicas=0
+    for app in "${apps[@]}"; do
+        if [[ -n $("${k[@]}" get pods -l "app=$app" -o name) ]]; then
+            "${k[@]}" wait --for=delete pod -l "app=$app" --timeout=90s
+        fi
+    done
+fi
+"${db[@]}" pg_dump -Fc -U postgres lockers > "$tmp/lockers.dump"
+cp "$legacy" "$tmp/pickup.key"
+topic=locker.pickup-mail.v1
+cli=/opt/kafka/bin
+kafka() { "${broker[@]}" "$cli/$1.sh" --bootstrap-server localhost:9092 "${@:2}"; }
+kafka kafka-topics --list > "$tmp/topics"
+if grep -Fxq "$topic" "$tmp/topics"; then
+    kafka kafka-get-offsets --topic "$topic" --time earliest > "$tmp/earliest"
+    kafka kafka-get-offsets --topic "$topic" --time latest > "$tmp/latest"
+    kafka kafka-consumer-groups --describe --group locker-notifications-v1 > "$tmp/consumer-offsets"
+    while IFS=: read -r _ partition start; do
+        end=$(awk -F: -v p="$partition" '$2 == p {print $3}' "$tmp/latest")
+        count=$((end - start))
+        if (( count > 0 )); then
+            kafka kafka-console-consumer --topic "$topic" --partition "$partition" --offset "$start" \
+                --max-messages "$count" --timeout-ms 15000 --consumer-property enable.auto.commit=false \
+                --property print.key=true --property print.offset=true > "$tmp/mail-$partition"
+            [[ $(wc -l < "$tmp/mail-$partition") -eq $count ]]
+        fi
+    done < "$tmp/earliest"
+fi
+if [[ "$target" == compose ]]; then touch "$tmp/deploy-pending"; fi
+mv "$tmp" "$backup"
+trap - EXIT
+if [[ "$target" == kind ]]; then rm -f "$legacy"; fi
+echo "Pre-Transit checkpoint saved under $backup"

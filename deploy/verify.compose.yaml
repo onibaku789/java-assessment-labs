@@ -1,0 +1,4 @@
+# Local inspection port for the S3 audit and restore exercise.
+services:
+  objects:
+    ports: ["127.0.0.1:19090:9090"]

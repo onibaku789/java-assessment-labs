@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Run a host-side lab tool with public settings from the selected Compose files."""
+
+import json
+import os
+import subprocess
+import sys
+
+
+def main():
+    compose_env = os.environ.copy()
+    compose_env.setdefault(
+        "COMPOSE_FILE",
+        "compose.yaml:deploy/verify.compose.yaml:deploy/manual/compose.yaml",
+    )
+    model = json.loads(
+        subprocess.check_output(
+            ["./scripts/compose", "config", "--format", "json"], env=compose_env
+        )
+    )
+    services = model["services"]
+    env = os.environ.copy()
+    env["LOCKER_S3_ENDPOINT"] = model["x-host-tools"]["LOCKER_S3_ENDPOINT"]
+    for service, keys in {
+        "reservations": ["LOCKER_JWT_ISSUER", "LOCKER_JWT_AUDIENCE"],
+        "receipts": ["LOCKER_RECEIPTS_BUCKET", "AWS_REGION"],
+        "rest": ["LOCKER_CORS_ORIGINS"],
+        "manual": [
+            "LAB_PORT",
+            "LAB_GRAFANA_URL",
+            "LAB_MAILPIT_URL",
+            "LAB_TOKEN_TTL_SECONDS",
+        ],
+    }.items():
+        properties = services.get(service, {}).get("environment", {})
+        env.update({key: properties[key] for key in keys if key in properties})
+    for service, name, target in (
+        ("mailpit", "MAILPIT_PORT", 8025),
+        ("grafana", "GRAFANA_PORT", 3000),
+    ):
+        for port in services.get(service, {}).get("ports", []):
+            if port["target"] == target:
+                env[name] = str(port["published"])
+    os.execvpe(sys.argv[1], sys.argv[1:], env)
+
+
+if __name__ == "__main__":
+    main()
