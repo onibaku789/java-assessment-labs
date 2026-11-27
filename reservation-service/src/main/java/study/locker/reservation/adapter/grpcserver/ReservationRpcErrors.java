@@ -1,16 +1,20 @@
 package study.locker.reservation.adapter.grpcserver;
 
 import io.grpc.*;
-import study.locker.common.PickupTransit;
 import jakarta.validation.ConstraintViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.exception.GrpcExceptionHandler;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.stereotype.Component;
+import study.locker.common.PickupTransit;
 import study.locker.reservation.domain.model.ReservationFailure;
 
 @Component
 final class ReservationRpcErrors implements GrpcExceptionHandler {
+    private static final Logger LOG = LoggerFactory.getLogger(ReservationRpcErrors.class);
+
     @Override
     public StatusException handleException(Throwable failure) {
         if (failure instanceof PickupTransit.Unavailable)
@@ -28,8 +32,7 @@ final class ReservationRpcErrors implements GrpcExceptionHandler {
     private static StatusException transportFailure(Throwable failure) {
         if (failure instanceof StatusRuntimeException rpc) return rpc.getStatus().asException(rpc.getTrailers());
         if (failure instanceof StatusException rpc) return rpc;
-        System.getLogger(ReservationRpcErrors.class.getName())
-                .log(System.Logger.Level.ERROR, "Reservation RPC failed with " + failure.getClass().getName());
+        LOG.error("Reservation RPC failed with {}", failure.getClass().getName());
         return Status.INTERNAL.withDescription("Service failure").asException();
     }
 

@@ -1,13 +1,17 @@
 package study.architecture;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.lang.ArchRule;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
 
-import org.junit.jupiter.api.Test;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
-import java.nio.file.*;
-import java.util.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 class ArchitectureTest {
     private static final Map<String, List<String>> PACKAGES = Map.ofEntries(
@@ -19,26 +23,29 @@ class ArchitectureTest {
             Map.entry("notification-worker", List.of("notification")), Map.entry("receipt-worker", List.of("receipt")),
             Map.entry("locker-verification", List.of("verification")));
 
-    @Test
-    void mainAndTestBytecodeFollowTheSameArchitecture() throws Exception {
-        Path testOutput = Path.of(ArchitectureTest.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-        Path mainOutput = testOutput.resolveSibling("classes");
-        assertThat(mainOutput).isDirectory();
-        var imported = new ClassFileImporter().importPaths(mainOutput, testOutput);
-        var contexts = PACKAGES.get(mainOutput.getParent().getParent().getFileName().toString());
-        assertThat(contexts).as("declared Maven module ownership").isNotNull();
-        for (var cls : imported) {
-            if (cls.getPackageName().equals("study.architecture")) {
-                assertThat(cls.getName().split("[$]")[0]).isIn("study.architecture.ArchitectureTest",
-                        "study.architecture.OnionRules", "study.architecture.ComplexityTest",
-                        "study.architecture.ComplexityLimitsTest", "study.architecture.BoundaryViolationTest");
-            } else {
-                String p = cls.getPackageName() + ".";
-                assertThat(contexts).as("owner of " + cls.getName())
-                        .anyMatch(c -> p.startsWith("study.locker." + c + "."));
-            }
+    @TestFactory
+    List<DynamicTest> architectureRules() throws Exception {
+        Path tests = Path.of(ArchitectureTest.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        Path main = tests.resolveSibling("classes");
+        assertThat(main).isDirectory();
+        var imported = new ClassFileImporter().importPaths(main, tests);
+        String module = main.getParent().getParent().getFileName().toString();
+        var contexts = PACKAGES.get(module);
+        assertThat(contexts).as("declared Maven module %s", module).isNotNull();
+        return rules(main, tests, contexts).stream()
+                .map(rule -> dynamicTest(rule.getDescription(), () -> rule.check(imported))).toList();
+    }
+
+    private static List<ArchRule> rules(Path main, Path tests, List<String> contexts) {
+        var rules = new ArrayList<>(List.of(OnionRules.moduleOwnership(contexts, tests), OnionRules.onion(),
+                OnionRules.independentAdapters(), OnionRules.platformIsIndependent(), OnionRules.publicGateway(),
+                OnionRules.integrationTestsOnly(main), OnionRules.assemblyIsPrivate(), CoreRules.telemetry(),
+                CoreRules.businessLogging(), CoreRules.filesystemTypes(main), CoreRules.filesystemCalls(main)));
+        for (String context : contexts) {
+            rules.add(OnionRules.contextDependencies(context));
+            rules.add(CoreRules.dependencies(context, main, false));
+            rules.add(CoreRules.dependencies(context, tests, true));
         }
-        OnionRules.onion().check(imported);
-        OnionRules.boundaries().check(imported);
+        return rules;
     }
 }

@@ -1,137 +1,104 @@
 package study.architecture;
 
-import static com.tngtech.archunit.base.DescribedPredicate.*;
-import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
-
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
-import com.tngtech.archunit.lang.*;
+import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.Architectures;
 
-import java.util.*;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
 
-/**
- * Rules shared by every Maven module, applied to all locally compiled main and test classes.
- */
+import static com.tngtech.archunit.base.DescribedPredicate.*;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
+import static com.tngtech.archunit.core.domain.properties.CanBeAnnotated.Predicates.annotatedWith;
+import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.nameMatching;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.*;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
+
 final class OnionRules {
-    private static final Set<String> ADAPTERS = Set.of("persistence", "security", "observability", "transaction",
-            "grpc", "grpcserver", "grpcclient", "crypto", "kafka", "smtp", "s3", "rest", "graphql", "soap");
-    private static final Set<String> LAUNCHERS = Set.of("directory.DirectoryApp", "reservation.ReservationApp",
-            "rest.RestApp", "graphql.GraphqlApp", "soap.SoapApp", "notification.NotificationApp", "receipt.ReceiptApp");
-    private static final DescribedPredicate<JavaClass> ASSEMBLY = describe(
-            "composition roots and service integration tests",
-            c -> LAUNCHERS.contains(c.getName().replaceFirst("^study[.]locker[.]", "")) ||
-                    resideInAnyPackage("study.locker.*.bootstrap..", "study.locker.*.integration..").test(c));
-    private static final DescribedPredicate<JavaClass> SUPPORT = resideInAnyPackage("study.locker.common",
-            "study.locker.security", "study.locker.delivery", "study.locker.wire", "study.locker.soap.wire",
-            "study.locker.verification..", "study.architecture");
-    private static final DescribedPredicate<JavaClass> CORE = resideInAnyPackage("..domain.model..",
-            "..domain.service..", "..application..");
+    static final DescribedPredicate<JavaClass> CORE = resideInAnyPackage("..domain.model..", "..domain.service..", "..application..");
+    private static final DescribedPredicate<JavaClass> ASSEMBLY =
+            resideInAnyPackage("study.locker.*.bootstrap..", "study.locker.*.integration..")
+                    .or(resideInAnyPackage("study.locker.*")
+                            .and(annotatedWith("org.springframework.boot.autoconfigure.SpringBootApplication")));
+    private static final DescribedPredicate<JavaClass> SHARED = resideInAnyPackage("study.locker.common",
+            "study.locker.wire", "study.locker.security", "study.locker.delivery");
+    private static final DescribedPredicate<JavaClass> PLATFORM = SHARED.or(resideInAnyPackage("study.locker.soap.wire"));
+    private static final DescribedPredicate<JavaClass> VERIFICATION = resideInAnyPackage("study.locker.verification..", "study.architecture");
+    private static final DescribedPredicate<JavaClass> ADAPTER = resideInAnyPackage("study.locker.*.adapter.*..");
+    private static final DescribedPredicate<JavaClass> PUBLIC_ADAPTER = resideInAnyPackage(
+            "study.locker.rest.adapter..", "study.locker.graphql.adapter..", "study.locker.soap.adapter..");
+    private static final DescribedPredicate<? super JavaClass> SHARED_TEST_TYPES = nameMatching(
+            "study\\.architecture\\.(ArchitectureTest|OnionRules|CoreRules|ComplexityTest|ComplexityLimitsTest"
+                    + "|BoundaryViolationTest)(\\$.*)?");
+
+    private OnionRules() {}
+
+    static ArchRule moduleOwnership(List<String> contexts, Path tests) {
+        String[] packages = contexts.stream().map(context -> "study.locker." + context + "..").toArray(String[]::new);
+        var sharedTests = fromOutput(tests).and(SHARED_TEST_TYPES);
+        return classes().that(not(sharedTests)).should().resideInAnyPackage(packages)
+                .as("Module owns only " + String.join(", ", packages) + " and shared architecture tests");
+    }
 
     static ArchRule onion() {
-        var rule = Architectures.onionArchitecture().domainModels("..domain.model..")
-                .domainServices("..domain.service..").applicationServices("..application..").withOptionalLayers(true);
-        for (String name : ADAPTERS) rule = rule.adapter(name, "..adapter." + name + "..");
-        return rule.ignoreDependency(ASSEMBLY, alwaysTrue())
-                .ensureAllClassesAreContainedInArchitectureIgnoring(ASSEMBLY.or(SUPPORT));
+        return Architectures.onionArchitecture().domainModels("..domain.model..").domainServices("..domain.service..")
+                .applicationServices("..application..")
+                .adapter("infrastructure", ADAPTER.or(ASSEMBLY).or(PLATFORM))
+                .adapter("verification", VERIFICATION)
+                .withOptionalLayers(true).ensureAllClassesAreContainedInArchitecture();
     }
 
-    static ArchRule boundaries() {
-        return classes().should(new ArchCondition<JavaClass>("respect context, fixture and framework boundaries") {
-            public void check(JavaClass from, ConditionEvents events) {
-                if (from.getPackageName().equals("study.architecture")) return;
-                boolean test = from.getSource().map(source -> source.getUri().toString().contains("/test-classes/"))
-                        .orElse(false);
-                if (from.getPackageName().contains(".integration") && !test)
-                    reject(events, from, "integration packages are test-only");
-                for (var edge : from.getDirectDependenciesFromSelf()) {
-                    var to = edge.getTargetClass().getBaseComponentType();
-                    if (telemetryInWrongAdapter(from, to)) {
-                        reject(events, from,
-                                "Telemetry belongs in an observability decorator: " + edge.getDescription());
-                    }
-                    if (violatesBoundary(from, to, test)) reject(events, from, edge.getDescription());
-                }
-            }
-        });
+    static ArchRule independentAdapters() {
+        return slices().matching("study.locker.(*).adapter.(*)..").namingSlices("$1 $2 adapter")
+                .should().notDependOnEachOther().allowEmptyShould(true);
     }
 
-    private static boolean telemetryInWrongAdapter(JavaClass from, JavaClass to) {
-        return isTelemetryDependency(to) && !adapter(from).isEmpty() && !adapter(from).equals("observability");
+    static ArchRule platformIsIndependent() {
+        return noClasses().that(PLATFORM.or(VERIFICATION)).should().dependOnClassesThat(ADAPTER.or(ASSEMBLY).or(CORE))
+                .allowEmptyShould(true).as("Shared libraries, wire contracts and verification tools are independent of service implementations");
     }
 
-    private static boolean violatesBoundary(JavaClass from, JavaClass to, boolean test) {
-        if (CORE.test(from) && !coreDependency(from, to, test)) return true;
-        if (!to.getPackageName().startsWith("study.locker.")) return false;
-        return violatesLockerBoundary(from, to);
+    static ArchRule publicGateway() {
+        return noClasses().that(PUBLIC_ADAPTER).should().dependOnClassesThat()
+                .resideInAnyPackage("io.grpc..", "study.locker.wire..").allowEmptyShould(true)
+                .as("Public protocol adapters call Reservations through LockerOperations");
     }
 
-    private static boolean violatesLockerBoundary(JavaClass from, JavaClass to) {
-        String own = context(from), other = context(to);
-        if (!mayDependOnContext(from, to, own, other)) return true;
-        if (ASSEMBLY.test(from) || own.equals("verification")) return false;
-        return ASSEMBLY.test(to) || crossesAdapter(from, to);
+    static ArchRule integrationTestsOnly(Path mainOutput) {
+        return noClasses().that(fromOutput(mainOutput)).should().resideInAnyPackage("..integration..")
+                .allowEmptyShould(true).as("Integration packages contain test code only");
     }
 
-    private static boolean crossesAdapter(JavaClass from, JavaClass to) {
-        String a = adapter(from), b = adapter(to);
-        return !a.isEmpty() && !b.isEmpty() && (!a.equals(b) || !context(from).equals(context(to)));
+    static ArchRule assemblyIsPrivate() {
+        return noClasses().that(resideInAnyPackage("study.locker..").and(not(ASSEMBLY)))
+                .should().dependOnClassesThat(ASSEMBLY).allowEmptyShould(true)
+                .as("Only composition roots and integration tests depend on assembly code");
     }
 
-    private static boolean coreDependency(JavaClass from, JavaClass to, boolean test) {
-        String p = to.getPackageName();
-        if (isCoreInstrumentation(to)) return false;
-        if (to.isPrimitive() || allowedJavaPackage(p)) return true;
-        if (test && resideInAnyPackage("org.junit..", "org.assertj..", "org.awaitility..", "org.mockito..").test(to))
-            return true;
-        return context(from).equals(context(to)) && CORE.test(to);
+    static ArchRule contextDependencies(String context) {
+        var own = inContext(context);
+        var allowed = own.or(not(resideInAnyPackage("study.locker..")));
+        if (!context.equals("verification")) allowed = allowed.or(SHARED);
+        if (Set.of("rest", "graphql", "soap").contains(context)) {
+            allowed = allowed.or(resideInAnyPackage("study.locker.edge.application..", "study.locker.edge.bootstrap.."));
+        }
+        return classes().that(own).should().onlyDependOnClassesThat(componentType(allowed)).allowEmptyShould(true)
+                .as(context + " accesses only its own context and permitted shared APIs");
     }
 
-    private static boolean isCoreInstrumentation(JavaClass type) {
-        return isTelemetryDependency(type) || type.getPackageName().startsWith("java.util.logging") ||
-                type.getName().startsWith("java.lang.System$Logger");
+    static DescribedPredicate<JavaClass> inContext(String context) {
+        return resideInAnyPackage("study.locker." + context + "..");
     }
 
-    private static boolean allowedJavaPackage(String p) {
-        return p.startsWith("java.") && !p.startsWith("java.sql") && !p.startsWith("java.net");
+    static DescribedPredicate<JavaClass> fromOutput(Path directory) {
+        var root = directory.toAbsolutePath().normalize();
+        return describe("compiled in " + root.getFileName(), type -> type.getSource()
+                .map(source -> Path.of(source.getUri()).normalize().startsWith(root)).orElse(false));
     }
 
-    private static boolean isTelemetryDependency(JavaClass target) {
-        return target.getPackageName().startsWith("io.micrometer.") ||
-                target.getPackageName().startsWith("org.slf4j") ||
-                target.getName().equals("study.locker.common.EventLog") ||
-                target.getName().equals("study.locker.delivery.DeliveryEvents");
-    }
-
-    private static String adapter(JavaClass c) {
-        String p = c.getPackageName();
-        int start = p.indexOf(".adapter.");
-        return start < 0 ? "" : p.substring(start + 9).split("[.]")[0];
-    }
-
-    private static String context(JavaClass c) {
-        String p = c.getPackageName();
-        return p.startsWith("study.locker.") ? p.substring(13).split("[.]")[0] : "";
-    }
-
-    private static boolean mayDependOnContext(JavaClass from, JavaClass to, String own, String other) {
-        if (own.equals(other)) return true;
-        if (own.equals("verification")) return false;
-        if (Set.of("common", "wire", "security", "delivery").contains(other)) return true;
-        if (!Set.of("rest", "graphql", "soap").contains(own) || !other.equals("edge")) return false;
-        return edgeApiDependency(from, to);
-    }
-
-    private static boolean edgeApiDependency(JavaClass from, JavaClass to) {
-        return resideInAnyPackage("study.locker.edge.application..").test(to) ||
-                ASSEMBLY.test(from) && resideInAnyPackage("study.locker.edge.bootstrap..").test(to);
-    }
-
-    private static void reject(ConditionEvents events, JavaClass c, String message) {
-        events.add(SimpleConditionEvent.violated(c, message));
-    }
-
-    private OnionRules() {
+    static DescribedPredicate<JavaClass> componentType(DescribedPredicate<JavaClass> allowed) {
+        return describe(allowed.getDescription(), type -> allowed.test(type.getBaseComponentType()));
     }
 }
