@@ -2,56 +2,41 @@ package study.locker.edge.adapter.observability;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-
+import org.aopalliance.intercept.MethodInterceptor;
+import org.aopalliance.intercept.MethodInvocation;
 import study.locker.common.EventLog;
 import study.locker.edge.application.GatewayFailure;
-import study.locker.edge.application.LockerOperations;
+import study.locker.edge.application.LockerOperations.Reservation;
 
-import java.util.List;
-import java.util.Locale;
-import java.util.function.Supplier;
-
-public record ObservedLockerOperations(
-        LockerOperations delegate, MeterRegistry metrics, String protocol)
-        implements LockerOperations {
+public record ObservedLockerOperations(MeterRegistry metrics, String protocol) implements MethodInterceptor {
     @Override
-    public List<Slot> available(String credential, String site, String size) {
-        return observe("available", null, null, () -> delegate.available(credential, site, size));
-    }
-
-    @Override
-    public Reservation get(String credential, String id) {
-        return observe("get", null, id, () -> delegate.get(credential, id));
-    }
-
-    @Override
-    public Reservation command(
-            String credential, Action action, String requestId, String id, String code) {
-        return observe(
-                action.name().toLowerCase(Locale.ROOT),
-                requestId,
-                action == Action.RESERVE ? null : id,
-                () -> delegate.command(credential, action, requestId, id, code));
-    }
-
-    private <T> T observe(String operation, String requestId, String id, Supplier<T> call) {
+    public Object invoke(MethodInvocation invocation) throws Throwable {
+        String operation = invocation.getMethod().getName();
+        String requestId = argument(invocation, "requestId");
+        String reservationId = argument(invocation, "reservationId");
         var sample = Timer.start(metrics);
         String outcome = "INTERNAL";
         try {
-            T value = call.get();
-            if (value instanceof Reservation booking) id = booking.id();
+            Object result = invocation.proceed();
+            if (result instanceof Reservation reservation) reservationId = reservation.id();
             outcome = "OK";
-            return value;
+            return result;
         } catch (GatewayFailure failure) {
             outcome = failure.code();
             throw failure;
         } finally {
-            sample.stop(
-                    Timer.builder("locker.gateway.requests")
-                            .tags("protocol", protocol, "operation", operation, "outcome", outcome)
-                            .publishPercentileHistogram()
-                            .register(metrics));
-            EventLog.record("gateway_request", operation, outcome, id, requestId, null);
+            sample.stop(Timer.builder("locker.gateway.requests")
+                    .tags("protocol", protocol, "operation", operation, "outcome", outcome).publishPercentileHistogram()
+                    .register(metrics));
+            EventLog.record("gateway_request", operation, outcome, reservationId, requestId, null);
         }
+    }
+
+    private static String argument(MethodInvocation invocation, String name) {
+        var parameters = invocation.getMethod().getParameters();
+        for (int i = 0; i < parameters.length; i++) {
+            if (name.equals(parameters[i].getName())) return (String) invocation.getArguments()[i];
+        }
+        return null;
     }
 }

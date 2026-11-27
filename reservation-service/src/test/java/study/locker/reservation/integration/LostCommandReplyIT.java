@@ -5,11 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 import io.grpc.*;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.*;
-import org.springframework.beans.factory.annotation.Autowired;
 import study.locker.common.*;
-import study.locker.reservation.adapter.grpcserver.ReservationEndpoint;
-import study.locker.reservation.application.*;
-import study.locker.security.RpcIdentity;
 import study.locker.wire.*;
 
 import java.time.*;
@@ -17,8 +13,6 @@ import java.util.*;
 import java.util.concurrent.*;
 
 class LostCommandReplyIT extends ReservationFixture {
-    @Autowired
-    ReservationAccess access;
 
     private static final class DropFirstReplyPerMethod implements ServerInterceptor {
         private final Set<String> seen = ConcurrentHashMap.newKeySet();
@@ -47,8 +41,8 @@ class LostCommandReplyIT extends ReservationFixture {
 
     @Test
     void lostCommandResponsesReplayTheCommittedReservationAndRejectedPickup() throws Exception {
-        var faulty = Rpc.serve(0, new ReservationEndpoint(access, secrets), new RpcIdentity(lockerDecoder),
-                new DropFirstReplyPerMethod());
+        var faulty = ServerBuilder.forPort(0).addService(server.reservations()).intercept(new DropFirstReplyPerMethod())
+                .build().start();
         var link = Rpc.channel("127.0.0.1:" + faulty.getPort());
         var metrics = new SimpleMeterRegistry();
         var guard = new RpcGuard("reservations", Duration.ofSeconds(2),

@@ -1,3 +1,0 @@
-<jaxws:bindings xmlns:jaxws="https://jakarta.ee/xml/ns/jaxws" version="3.0" wsdlLocation="locker.wsdl">
-    <jaxws:enableWrapperStyle>false</jaxws:enableWrapperStyle>
-</jaxws:bindings>

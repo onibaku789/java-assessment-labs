@@ -10,9 +10,8 @@ import study.locker.reservation.application.*;
 @Configuration(proxyBeanMethods = false)
 class CommandConfiguration {
     @Bean
-    CommandHandler commands(ReservationCommands business, CommandJournal journal, JdbcClient db,
-                            TransactionTemplate transactions) {
-        var replay = new IdempotentCommands(journal, business);
+    CommandHandler commands(CommandJournal journal, JdbcClient db, TransactionTemplate transactions) {
+        var replay = new IdempotentCommands(journal);
         var commit = new TransactionalCommands(transactions, new TraceCommandTransaction(db, replay));
         return new ObservedCommands(commit);
     }

@@ -16,7 +16,6 @@
         <mockito.agent>
             -javaagent:"${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar"
         </mockito.agent>
-        <cxf.version>4.2.4</cxf.version>
     </properties>
     <modules>
         <module>locker-contracts</module>

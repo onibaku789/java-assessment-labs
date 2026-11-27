@@ -7,13 +7,15 @@ import java.io.IOException;
 import java.util.function.Supplier;
 
 public final class Rpc {
-    private Rpc() {}
+    public static final Metadata.Key<String> AUTHORIZATION = Metadata.Key.of("authorization",
+            Metadata.ASCII_STRING_MARSHALLER);
 
-    public static Server serve(int port, BindableService service, ServerInterceptor... interceptors)
-            throws IOException {
-        return ServerBuilder.forPort(port)
-                .addService(ServerInterceptors.intercept(service, interceptors))
-                .build()
+    private Rpc() {
+    }
+
+    public static Server serve(int port, BindableService service,
+                               ServerInterceptor... interceptors) throws IOException {
+        return ServerBuilder.forPort(port).addService(ServerInterceptors.intercept(service, interceptors)).build()
                 .start();
     }
 
@@ -30,11 +32,8 @@ public final class Rpc {
             return;
         } catch (RuntimeException failure) {
             System.getLogger(Rpc.class.getName())
-                    .log(
-                            System.Logger.Level.ERROR,
-                            "RPC failed with " + failure.getClass().getName());
-            observer.onError(
-                    Status.INTERNAL.withDescription("Service failure").asRuntimeException());
+                    .log(System.Logger.Level.ERROR, "RPC failed with " + failure.getClass().getName());
+            observer.onError(Status.INTERNAL.withDescription("Service failure").asRuntimeException());
             return;
         }
         observer.onNext(result);

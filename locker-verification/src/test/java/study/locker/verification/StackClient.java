@@ -162,10 +162,7 @@ final class StackClient {
 
     private static Result soapResult(String op, HttpResponse<String> r) throws Exception {
         if (r.statusCode() == 401) return error("UNAUTHENTICATED");
-        var parser = DocumentBuilderFactory.newDefaultNSInstance();
-        parser.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        var doc = parser.newDocumentBuilder()
-                .parse(new ByteArrayInputStream(r.body().getBytes(StandardCharsets.UTF_8)));
+        var doc = xml(r.body());
         if (r.statusCode() >= 400) return error(field(doc, "code"));
         if (op.equals("available")) {
             var fields = doc.getElementsByTagNameNS("urn:lockers:v1", "id");
@@ -174,6 +171,12 @@ final class StackClient {
             return new Result("OK", String.join(",", ids), "", "");
         }
         return new Result("OK", field(doc, "id"), field(doc, "state"), field(doc, "compartmentId"));
+    }
+
+    static Document xml(String body) throws Exception {
+        var parser = DocumentBuilderFactory.newDefaultNSInstance();
+        parser.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        return parser.newDocumentBuilder().parse(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
     }
 
     private static String field(Document doc, String name) {

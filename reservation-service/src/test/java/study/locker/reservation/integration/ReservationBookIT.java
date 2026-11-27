@@ -7,7 +7,6 @@ import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 import study.locker.reservation.application.*;
-import study.locker.reservation.application.ReservationCommands.Action;
 import study.locker.wire.*;
 
 import java.sql.SQLException;
@@ -24,11 +23,11 @@ class ReservationBookIT extends ReservationFixture {
     @Test
     void successfulReplayReturnsOriginalResultAndDifferentInputConflicts() {
         Command command = cmd("CENTRAL-S1");
-        Booking before = execute(customer, Action.RESERVE, command);
-        execute(customer, Action.CANCEL, cmd(before.getId()));
-        assertThat(execute(customer, Action.RESERVE, command)).isEqualTo(before);
+        Booking before = client(customer).reserve(command);
+        client(customer).cancel(cmd(before.getId()));
+        assertThat(client(customer).reserve(command)).isEqualTo(before);
         assertThatThrownBy(
-                () -> execute(customer, Action.RESERVE, command.toBuilder().setId("CENTRAL-L1").build())).isInstanceOf(
+                () -> client(customer).reserve(command.toBuilder().setId("CENTRAL-L1").build())).isInstanceOf(
                 StatusRuntimeException.class).hasMessageContaining("ALREADY_EXISTS");
         assertThat(reserve().getId()).isNotEqualTo(before.getId());
     }

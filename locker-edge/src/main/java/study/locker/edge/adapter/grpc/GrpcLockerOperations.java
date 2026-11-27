@@ -5,63 +5,81 @@ import io.grpc.stub.MetadataUtils;
 
 import study.locker.common.RpcGuard;
 import study.locker.edge.application.*;
-import study.locker.security.RpcIdentity;
+import study.locker.common.Rpc;
 import study.locker.wire.*;
+import study.locker.wire.ReservationsGrpc.ReservationsBlockingStub;
 
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 public class GrpcLockerOperations implements LockerOperations {
-    private final ReservationsGrpc.ReservationsBlockingStub base;
+    private final ReservationsBlockingStub base;
+    private final Supplier<String> callerToken;
     private final RpcGuard guard;
 
-    public GrpcLockerOperations(Channel channel, RpcGuard guard) {
+    public GrpcLockerOperations(Channel channel, RpcGuard guard, Supplier<String> callerToken) {
         this.guard = guard;
+        this.callerToken = callerToken;
         base = ReservationsGrpc.newBlockingStub(channel);
     }
 
-    private ReservationsGrpc.ReservationsBlockingStub stub(String credential) {
+    private ReservationsBlockingStub authenticatedStub() {
         Metadata metadata = new Metadata();
-        metadata.put(RpcIdentity.AUTH, "Bearer " + credential);
+        metadata.put(Rpc.AUTHORIZATION, "Bearer " + callerToken.get());
         return base.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
     }
 
-    public List<Slot> available(String credential, String site, String size) {
+    @Override
+    public List<Slot> available(String site, String size) {
         var query = Search.newBuilder().setSite(text(site)).setSize(text(size)).build();
-        var result = rpc(credential, true, client -> client.available(query));
-        return result.getItemsList().stream()
-                .map(slot -> new Slot(slot.getId(), slot.getSite(), slot.getSize()))
+        var result = rpc(true, client -> client.available(query));
+        return result.getItemsList().stream().map(slot -> new Slot(slot.getId(), slot.getSite(), slot.getSize()))
                 .toList();
     }
 
-    public Reservation get(String credential, String id) {
+    @Override
+    public Reservation get(String id) {
         var key = Key.newBuilder().setId(text(id)).build();
-        return reservation(rpc(credential, true, client -> client.get(key)));
+        return reservation(rpc(true, client -> client.get(key)));
     }
 
-    public Reservation command(
-            String credential, Action action, String requestId, String id, String code) {
-        var cmd =
-                Command.newBuilder()
-                        .setId(text(id))
-                        .setRequestId(text(requestId))
-                        .setCode(text(code))
-                        .build();
-        Booking booking =
-                rpc(
-                        credential,
-                        validKey(requestId),
-                        client ->
-                                switch (action) {
-                                    case RESERVE -> client.reserve(cmd);
-                                    case CANCEL -> client.cancel(cmd);
-                                    case DEPOSIT -> client.deposit(cmd);
-                                    case REISSUE -> client.reissue(cmd);
-                                    case COLLECT -> client.collect(cmd);
-                                });
-        return reservation(booking);
+    @Override
+    public Reservation reserve(String requestId, String compartmentId) {
+        return send(commandFor(requestId, compartmentId), ReservationsBlockingStub::reserve);
+    }
+
+    @Override
+    public Reservation cancel(String requestId, String reservationId) {
+        return send(commandFor(requestId, reservationId), ReservationsBlockingStub::cancel);
+    }
+
+    @Override
+    public Reservation deposit(String requestId, String reservationId) {
+        return send(commandFor(requestId, reservationId), ReservationsBlockingStub::deposit);
+    }
+
+    @Override
+    public Reservation reissue(String requestId, String reservationId) {
+        return send(commandFor(requestId, reservationId), ReservationsBlockingStub::reissue);
+    }
+
+    @Override
+    public Reservation collect(String requestId, String reservationId, String code) {
+        return send(commandFor(requestId, reservationId).setCode(text(code)), ReservationsBlockingStub::collect);
+    }
+
+    private static Command.Builder commandFor(String requestId, String targetId) {
+        return Command.newBuilder().setRequestId(text(requestId)).setId(text(targetId));
+    }
+
+    private Reservation send(Command.Builder builder,
+                             BiFunction<ReservationsBlockingStub, Command, Booking> operation) {
+        var command = builder.build();
+        return reservation(rpc(validKey(command.getRequestId()), client -> operation.apply(client, command)));
     }
 
     private static Reservation reservation(Booking booking) {
@@ -77,12 +95,9 @@ public class GrpcLockerOperations implements LockerOperations {
         }
     }
 
-    private <T> T rpc(
-            String credential,
-            boolean replay,
-            Function<ReservationsGrpc.ReservationsBlockingStub, T> call) {
+    private <T> T rpc(boolean replay, Function<ReservationsBlockingStub, T> call) {
         try {
-            var client = stub(credential);
+            var client = authenticatedStub();
             return guard.call(replay, deadline -> call.apply(client.withDeadline(deadline)));
         } catch (StatusRuntimeException failure) {
             var status = failure.getStatus();

@@ -3,23 +3,23 @@ package study.locker.edge.application;
 import java.util.List;
 
 public interface LockerOperations {
-    enum Action {
-        RESERVE,
-        CANCEL,
-        DEPOSIT,
-        REISSUE,
-        COLLECT
-    }
-
     record Slot(String id, String site, String size) {
     }
 
     record Reservation(String id, String compartmentId, String state) {
     }
 
-    List<Slot> available(String credential, String site, String size);
+    List<Slot> available(String site, String size);
 
-    Reservation get(String credential, String id);
+    Reservation get(String reservationId);
 
-    Reservation command(String credential, Action action, String requestId, String id, String code);
+    Reservation reserve(String requestId, String compartmentId);
+
+    Reservation cancel(String requestId, String reservationId);
+
+    Reservation deposit(String requestId, String reservationId);
+
+    Reservation reissue(String requestId, String reservationId);
+
+    Reservation collect(String requestId, String reservationId, String code);
 }

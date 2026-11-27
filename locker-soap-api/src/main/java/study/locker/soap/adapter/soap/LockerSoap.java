@@ -1,73 +1,82 @@
 package study.locker.soap.adapter.soap;
 
-import jakarta.jws.WebService;
-
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.jwt.Jwt;
-
-import study.locker.edge.application.*;
+import jakarta.xml.bind.JAXBElement;
+import org.springframework.ws.server.endpoint.annotation.*;
+import study.locker.edge.application.LockerOperations;
 import study.locker.soap.wire.*;
 
-@WebService(endpointInterface = "study.locker.soap.wire.LockerPortType", targetNamespace = "urn:lockers:v1", serviceName = "LockerService", portName = "LockerPort")
-public class LockerSoap implements LockerPortType {
+@Endpoint
+public class LockerSoap {
+    static final String NAMESPACE = "urn:lockers:v1";
     private final LockerOperations gateway;
+    private final ObjectFactory xml = new ObjectFactory();
 
     public LockerSoap(LockerOperations gateway) {
         this.gateway = gateway;
     }
 
-    private String actor() {
-        return ((Jwt) SecurityContextHolder.getContext().getAuthentication().getPrincipal()).getTokenValue();
+    @PayloadRoot(namespace = NAMESPACE, localPart = "available")
+    @ResponsePayload
+    public JAXBElement<Compartments> available(@RequestPayload JAXBElement<SearchInput> request) {
+        var input = request.getValue();
+        var response = new Compartments();
+        for (var slot : gateway.available(input.getSite(), input.getSize())) {
+            var item = new Compartment();
+            item.setId(slot.id());
+            item.setSite(slot.site());
+            item.setSize(slot.size());
+            response.getItems().add(item);
+        }
+        return xml.createAvailableResponse(response);
     }
 
-    public Compartments available(SearchInput q) throws ProblemMessage {
-        return SoapFaults.call(() -> {
-            var response = new Compartments();
-            for (var slot : gateway.available(actor(), q.getSite(), q.getSize())) {
-                var item = new Compartment();
-                item.setId(slot.id());
-                item.setSite(slot.site());
-                item.setSize(slot.size());
-                response.getItems().add(item);
-            }
-            return response;
-        });
+    @PayloadRoot(namespace = NAMESPACE, localPart = "get")
+    @ResponsePayload
+    public JAXBElement<Booking> get(@RequestPayload JAXBElement<KeyInput> request) {
+        return xml.createGetResponse(booking(gateway.get(request.getValue().getId())));
     }
 
-    public Booking get(KeyInput q) throws ProblemMessage {
-        return SoapFaults.call(() -> map(gateway.get(actor(), q.getId())));
+    @PayloadRoot(namespace = NAMESPACE, localPart = "reserve")
+    @ResponsePayload
+    public JAXBElement<Booking> reserve(@RequestPayload JAXBElement<CommandInput> request) {
+        var input = request.getValue();
+        return xml.createReserveResponse(booking(gateway.reserve(input.getRequestId(), input.getId())));
     }
 
-    public Booking reserve(CommandInput q) throws ProblemMessage {
-        return command(LockerOperations.Action.RESERVE, q);
+    @PayloadRoot(namespace = NAMESPACE, localPart = "cancel")
+    @ResponsePayload
+    public JAXBElement<Booking> cancel(@RequestPayload JAXBElement<CommandInput> request) {
+        var input = request.getValue();
+        return xml.createCancelResponse(booking(gateway.cancel(input.getRequestId(), input.getId())));
     }
 
-    public Booking cancel(CommandInput q) throws ProblemMessage {
-        return command(LockerOperations.Action.CANCEL, q);
+    @PayloadRoot(namespace = NAMESPACE, localPart = "deposit")
+    @ResponsePayload
+    public JAXBElement<Booking> deposit(@RequestPayload JAXBElement<CommandInput> request) {
+        var input = request.getValue();
+        return xml.createDepositResponse(booking(gateway.deposit(input.getRequestId(), input.getId())));
     }
 
-    public Booking deposit(CommandInput q) throws ProblemMessage {
-        return command(LockerOperations.Action.DEPOSIT, q);
+    @PayloadRoot(namespace = NAMESPACE, localPart = "reissue")
+    @ResponsePayload
+    public JAXBElement<Booking> reissue(@RequestPayload JAXBElement<CommandInput> request) {
+        var input = request.getValue();
+        return xml.createReissueResponse(booking(gateway.reissue(input.getRequestId(), input.getId())));
     }
 
-    public Booking reissue(CommandInput q) throws ProblemMessage {
-        return command(LockerOperations.Action.REISSUE, q);
+    @PayloadRoot(namespace = NAMESPACE, localPart = "collect")
+    @ResponsePayload
+    public JAXBElement<Booking> collect(@RequestPayload JAXBElement<CommandInput> request) {
+        var input = request.getValue();
+        return xml.createCollectResponse(
+                booking(gateway.collect(input.getRequestId(), input.getId(), input.getCode())));
     }
 
-    public Booking collect(CommandInput q) throws ProblemMessage {
-        return command(LockerOperations.Action.COLLECT, q);
+    private static Booking booking(LockerOperations.Reservation value) {
+        var response = new Booking();
+        response.setId(value.id());
+        response.setState(value.state());
+        response.setCompartmentId(value.compartmentId());
+        return response;
     }
-
-    private Booking command(LockerOperations.Action action, CommandInput q) throws ProblemMessage {
-        return SoapFaults.call(() -> map(gateway.command(actor(), action, q.getRequestId(), q.getId(), q.getCode())));
-    }
-
-    private Booking map(LockerOperations.Reservation value) {
-        var b = new Booking();
-        b.setId(value.id());
-        b.setState(value.state());
-        b.setCompartmentId(value.compartmentId());
-        return b;
-    }
-
 }

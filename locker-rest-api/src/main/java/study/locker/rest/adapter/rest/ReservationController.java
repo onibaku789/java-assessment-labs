@@ -1,8 +1,6 @@
 package study.locker.rest.adapter.rest;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import study.locker.edge.application.*;
@@ -27,45 +25,40 @@ public class ReservationController {
     }
 
     @GetMapping("/compartments")
-    List<Slot> available(@AuthenticationPrincipal Jwt jwt, @RequestParam(required = false) String site,
-                         @RequestParam(required = false) String size) {
-        return gateway.available(jwt.getTokenValue(), site, size);
+    List<Slot> available(@RequestParam(required = false) String site, @RequestParam(required = false) String size) {
+        return gateway.available(site, size);
     }
 
     @GetMapping("/reservations/{id}")
-    Reservation get(@AuthenticationPrincipal Jwt jwt, @PathVariable String id) {
-        return gateway.get(jwt.getTokenValue(), id);
+    Reservation get(@PathVariable String id) {
+        return gateway.get(id);
     }
 
     @PostMapping("/reservations")
-    ResponseEntity<Reservation> reserve(@AuthenticationPrincipal Jwt jwt, @RequestHeader("Idempotency-Key") String key,
-                                        @RequestBody Create body) {
-        Reservation result = gateway.command(jwt.getTokenValue(), Action.RESERVE, key, body.compartmentId(), null);
+    ResponseEntity<Reservation> reserve(@RequestHeader("Idempotency-Key") String key, @RequestBody Create body) {
+        Reservation result = gateway.reserve(key, body.compartmentId());
         return ResponseEntity.created(URI.create("/v1/reservations/" + result.id())).body(result);
     }
 
     @PostMapping("/reservations/{id}/cancel")
-    Reservation cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
-                       @RequestHeader("Idempotency-Key") String key) {
-        return gateway.command(jwt.getTokenValue(), Action.CANCEL, key, id, null);
+    Reservation cancel(@PathVariable String id, @RequestHeader("Idempotency-Key") String key) {
+        return gateway.cancel(key, id);
     }
 
     @PostMapping("/reservations/{id}/deposit")
-    Reservation deposit(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
-                        @RequestHeader("Idempotency-Key") String key) {
-        return gateway.command(jwt.getTokenValue(), Action.DEPOSIT, key, id, null);
+    Reservation deposit(@PathVariable String id, @RequestHeader("Idempotency-Key") String key) {
+        return gateway.deposit(key, id);
     }
 
     @PostMapping("/reservations/{id}/reissue")
-    Reservation reissue(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
-                        @RequestHeader("Idempotency-Key") String key) {
-        return gateway.command(jwt.getTokenValue(), Action.REISSUE, key, id, null);
+    Reservation reissue(@PathVariable String id, @RequestHeader("Idempotency-Key") String key) {
+        return gateway.reissue(key, id);
     }
 
     @PostMapping("/reservations/{id}/collect")
-    Reservation collect(@AuthenticationPrincipal Jwt jwt, @PathVariable String id,
-                        @RequestHeader("Idempotency-Key") String key, @RequestBody Pickup pickup) {
-        return gateway.command(jwt.getTokenValue(), Action.COLLECT, key, id, pickup.code());
+    Reservation collect(@PathVariable String id, @RequestHeader("Idempotency-Key") String key,
+                        @RequestBody Pickup pickup) {
+        return gateway.collect(key, id, pickup.code());
     }
 
 }

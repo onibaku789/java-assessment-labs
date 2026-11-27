@@ -5,18 +5,11 @@ import static study.locker.reservation.domain.model.ReservationFailure.Reason.*;
 import study.locker.reservation.domain.model.*;
 
 import java.time.Clock;
+import java.time.Instant;
 
 public record ReservationCommands(ReservationStore store, Directory directory, PickupCodes codes,
                                   ReservationEvents events, Clock clock) {
-    public enum Action {
-        RESERVE, CANCEL, DEPOSIT, REISSUE, COLLECT
-    }
-
-    public CommandHandler.Result execute(Caller caller, Action action, String target, String candidate) {
-        return action == Action.RESERVE ? reserve(caller, target) : transition(caller, action, target, candidate);
-    }
-
-    private CommandHandler.Result reserve(Caller caller, String target) {
+    public CommandHandler.Result reserve(Caller caller, String target) {
         String email = caller.verifiedEmail();
         directory.requireCompartment(target);
         var booking = Reservation.reserve(target, caller.subject(), email);
@@ -25,32 +18,52 @@ public record ReservationCommands(ReservationStore store, Directory directory, P
         return new CommandHandler.Result(booking.view(), null);
     }
 
-    private CommandHandler.Result transition(Caller caller, Action action, String target, String candidate) {
-        var id = ReservationQueries.parseId(target);
-        var booking = store.find(id, true).orElseThrow(ReservationFailure::missing);
-        if (action != Action.DEPOSIT) booking.ensureOwner(caller.subject());
-        var now = clock.instant();
-        String error = null;
-        switch (action) {
-            case CANCEL -> booking.cancel();
-            case DEPOSIT, REISSUE -> {
-                issuePickup(booking, action, now);
-            }
-            case COLLECT ->
-                    error = booking.collect(now, verifier -> codes.matches(id, candidate, verifier)).orElse(null);
-            default -> throw new IllegalStateException("Unexpected transition");
-        }
-        store.update(booking);
-        var view = booking.view();
-        if (error == null)
-            events.lifecycle(view, action == Action.REISSUE ? "CODE_REISSUED" : view.state().name(), now);
-        return new CommandHandler.Result(view, error);
+    public CommandHandler.Result cancel(Caller caller, String target) {
+        var booking = owned(caller, target);
+        booking.cancel();
+        return save(booking, clock.instant(), "CANCELLED", null);
     }
 
-    private void issuePickup(Reservation booking, Action action, java.time.Instant now) {
+    public CommandHandler.Result deposit(String target) {
+        var booking = locked(target);
+        var now = clock.instant();
         var issued = codes.issue(booking, now);
-        if (action == Action.DEPOSIT) booking.deposit(issued.pickup());
-        else booking.reissue(issued.pickup());
+        booking.deposit(issued.pickup());
         events.pickupMail(booking, issued);
+        return save(booking, now, "DEPOSITED", null);
+    }
+
+    public CommandHandler.Result reissue(Caller caller, String target) {
+        var booking = owned(caller, target);
+        var now = clock.instant();
+        var issued = codes.issue(booking, now);
+        booking.reissue(issued.pickup());
+        events.pickupMail(booking, issued);
+        return save(booking, now, "CODE_REISSUED", null);
+    }
+
+    public CommandHandler.Result collect(Caller caller, String target, String code) {
+        var booking = owned(caller, target);
+        var now = clock.instant();
+        var id = booking.view().id();
+        var error = booking.collect(now, verifier -> codes.matches(id, code, verifier));
+        return save(booking, now, "COLLECTED", error.orElse(null));
+    }
+
+    private Reservation owned(Caller caller, String target) {
+        var booking = locked(target);
+        booking.ensureOwner(caller.subject());
+        return booking;
+    }
+
+    private Reservation locked(String target) {
+        return store.find(ReservationQueries.parseId(target), true).orElseThrow(ReservationFailure::missing);
+    }
+
+    private CommandHandler.Result save(Reservation booking, Instant now, String event, String error) {
+        store.update(booking);
+        var view = booking.view();
+        if (error == null) events.lifecycle(view, event, now);
+        return new CommandHandler.Result(view, error);
     }
 }

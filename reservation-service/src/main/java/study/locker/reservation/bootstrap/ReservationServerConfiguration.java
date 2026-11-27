@@ -1,24 +1,21 @@
 package study.locker.reservation.bootstrap;
 
-import io.grpc.*;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.*;
+import org.springframework.grpc.server.GlobalServerInterceptor;
+import org.springframework.grpc.server.security.*;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import study.locker.common.*;
-import study.locker.reservation.adapter.grpcserver.ReservationEndpoint;
-import study.locker.reservation.application.*;
-import study.locker.security.*;
+import org.springframework.security.config.Customizer;
 
-import java.io.IOException;
+import study.locker.security.LockerJwt;
 
 @EnableMethodSecurity
 @Import(LockerJwt.class)
 @Configuration(proxyBeanMethods = false)
 class ReservationServerConfiguration {
-    @Bean(destroyMethod = "shutdownNow")
-    Server reservationServer(ReservationAccess access, PickupSecrets secrets, JwtDecoder jwt,
-                             @Value("${locker.grpc.port:9090}") int port) throws IOException {
-        return Rpc.serve(port, new ReservationEndpoint(access, secrets), new RpcIdentity(jwt));
+    @Bean
+    @GlobalServerInterceptor
+    AuthenticationProcessInterceptor reservationAuthentication(GrpcSecurity security) throws Exception {
+        return security.authorizeRequests(requests -> requests.allRequests().authenticated())
+                .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults())).build();
     }
 }

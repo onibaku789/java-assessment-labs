@@ -1,21 +1,17 @@
 package study.locker.reservation.adapter.grpcserver;
 
-import static study.locker.reservation.application.ReservationCommands.Action;
+import org.springframework.grpc.server.service.GrpcService;
 
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 
-import jakarta.validation.ConstraintViolationException;
-
-import study.locker.common.*;
-import study.locker.reservation.application.*;
-import study.locker.reservation.domain.model.*;
-import study.locker.security.RpcIdentity;
+import study.locker.common.PickupSecrets;
+import study.locker.reservation.application.ReservationAccess;
+import study.locker.reservation.domain.model.Reservation;
 import study.locker.wire.*;
 
-import java.util.*;
-import java.util.function.Supplier;
+import java.util.Base64;
 
+@GrpcService
 public final class ReservationEndpoint extends ReservationsGrpc.ReservationsImplBase {
     private final ReservationAccess access;
     private final PickupSecrets secrets;
@@ -25,43 +21,47 @@ public final class ReservationEndpoint extends ReservationsGrpc.ReservationsImpl
         this.secrets = secrets;
     }
 
+    @Override
     public void available(Search q, StreamObserver<Compartments> out) {
-        reply(out, () -> Compartments.newBuilder().addAllItems(access.available(q.getSite(), q.getSize()).stream()
+        reply(out, Compartments.newBuilder().addAllItems(access.available(q.getSite(), q.getSize()).stream()
                         .map(s -> Compartment.newBuilder().setId(s.id()).setSite(s.site()).setSize(s.size()).build()).toList())
                 .build());
     }
 
+    @Override
     public void get(Key q, StreamObserver<Booking> out) {
-        reply(out, () -> wire(access.get(q.getId())));
+        reply(out, wire(access.get(q.getId())));
     }
 
+    @Override
     public void reserve(Command q, StreamObserver<Booking> out) {
-        command(Action.RESERVE, q, out);
+        reply(out, wire(access.reserve(request("RESERVE", q))));
     }
 
+    @Override
     public void cancel(Command q, StreamObserver<Booking> out) {
-        command(Action.CANCEL, q, out);
+        reply(out, wire(access.cancel(request("CANCEL", q))));
     }
 
+    @Override
     public void deposit(Command q, StreamObserver<Booking> out) {
-        command(Action.DEPOSIT, q, out);
+        reply(out, wire(access.deposit(request("DEPOSIT", q))));
     }
 
+    @Override
     public void reissue(Command q, StreamObserver<Booking> out) {
-        command(Action.REISSUE, q, out);
+        reply(out, wire(access.reissue(request("REISSUE", q))));
     }
 
+    @Override
     public void collect(Command q, StreamObserver<Booking> out) {
-        command(Action.COLLECT, q, out);
+        reply(out, wire(access.collect(request("COLLECT", q), q.getCode())));
     }
 
-    private void command(Action action, Command q, StreamObserver<Booking> out) {
-        reply(out, () -> {
-            String fingerprint = secrets.fingerprint(
-                    "command:" + action + ":" + Base64.getEncoder().encodeToString(q.toByteArray()));
-            var cmd = new ReservationAccess.Request(q.getRequestId(), q.getId(), q.getCode(), fingerprint);
-            return wire(access.execute(action, cmd));
-        });
+    private ReservationAccess.Request request(String operation, Command command) {
+        String fingerprint = secrets.fingerprint(
+                "command:" + operation + ":" + Base64.getEncoder().encodeToString(command.toByteArray()));
+        return new ReservationAccess.Request(operation, command.getRequestId(), command.getId(), fingerprint);
     }
 
     private static Booking wire(Reservation.View v) {
@@ -69,27 +69,8 @@ public final class ReservationEndpoint extends ReservationsGrpc.ReservationsImpl
                 .setState(v.state().name()).build();
     }
 
-    private static <T> void reply(StreamObserver<T> out, Supplier<T> work) {
-        Rpc.reply(out, () -> {
-            try {
-                return RpcIdentity.asAuthenticated(work);
-            } catch (ConstraintViolationException ex) {
-                throw Status.INVALID_ARGUMENT.withDescription(
-                        ex.getConstraintViolations().iterator().next().getMessage()).asRuntimeException();
-            } catch (ReservationFailure ex) {
-                var status = status(ex);
-                throw status.withDescription(ex.getMessage()).asRuntimeException();
-            }
-        });
-    }
-
-    private static Status status(ReservationFailure ex) {
-        return switch (ex.reason()) {
-            case INVALID_INPUT -> Status.INVALID_ARGUMENT;
-            case UNKNOWN_RESERVATION -> Status.NOT_FOUND;
-            case OCCUPIED, REUSED_KEY -> Status.ALREADY_EXISTS;
-            case FORBIDDEN -> Status.PERMISSION_DENIED;
-            case INVALID_STATE -> Status.FAILED_PRECONDITION;
-        };
+    private static <T> void reply(StreamObserver<T> out, T value) {
+        out.onNext(value);
+        out.onCompleted();
     }
 }

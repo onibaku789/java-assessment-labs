@@ -10,7 +10,6 @@ import org.springframework.context.annotation.*;
 import study.locker.common.Rpc;
 import study.locker.common.RpcGuard;
 import study.locker.edge.adapter.grpc.GrpcLockerOperations;
-import study.locker.edge.adapter.observability.ObservedLockerOperations;
 import study.locker.edge.adapter.security.*;
 import study.locker.edge.application.LockerOperations;
 
@@ -31,8 +30,7 @@ public class EdgeConfig {
                                     @Value("${locker.reservations.deadline:4s}") Duration deadline,
                                     RpcGuard.Settings settings, CallerQuota quota) {
         var guard = new RpcGuard("reservations", deadline, settings, 8, metrics);
-        return new ObservedLockerOperations(new QuotaOperations(quota, new GrpcLockerOperations(channel, guard)),
-                metrics, protocol);
+        var reservations = new GrpcLockerOperations(channel, guard, CurrentCaller::tokenValue);
+        return GatewayPolicies.apply(reservations, metrics, protocol, quota);
     }
-
 }

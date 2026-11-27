@@ -1,34 +1,38 @@
 package study.locker.soap.bootstrap;
 
-import org.apache.cxf.Bus;
-import org.apache.cxf.BusFactory;
-import org.apache.cxf.jaxws.EndpointImpl;
-import org.apache.cxf.transport.servlet.CXFNonSpringServlet;
-import org.springframework.boot.*;
-import org.springframework.boot.web.servlet.ServletRegistrationBean;
+import jakarta.servlet.*;
+import jakarta.servlet.http.*;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.*;
+import org.springframework.oxm.jaxb.Jaxb2Marshaller;
+import study.locker.soap.wire.ObjectFactory;
 
-import study.locker.edge.application.LockerOperations;
-import study.locker.soap.adapter.soap.LockerSoap;
+import java.io.IOException;
 
 @Configuration(proxyBeanMethods = false)
 class SoapConfiguration {
     @Bean
-    Bus lockerBus() {
-        return BusFactory.newInstance().createBus();
+    Jaxb2Marshaller lockerXml() {
+        var marshaller = new Jaxb2Marshaller();
+        marshaller.setContextPath(ObjectFactory.class.getPackageName());
+        return marshaller;
     }
 
     @Bean
-    ServletRegistrationBean<CXFNonSpringServlet> soapServlet(Bus bus) {
-        var servlet = new CXFNonSpringServlet(null, bus);
-        return new ServletRegistrationBean<>(servlet, "/soap/*");
-    }
-
-    @Bean(destroyMethod = "stop")
-    EndpointImpl lockerEndpoint(Bus bus, LockerOperations gateway) {
-        var endpoint = new EndpointImpl(bus, new LockerSoap(gateway));
-        endpoint.setWsdlLocation("classpath:wsdl/locker.wsdl");
-        endpoint.publish("/lockers");
-        return endpoint;
+    FilterRegistrationBean<HttpFilter> wsdlDiscovery() {
+        var registration = new FilterRegistrationBean<HttpFilter>();
+        registration.addUrlPatterns("/soap/lockers");
+        registration.setFilter(new HttpFilter() {
+            @Override
+            protected void doFilter(HttpServletRequest request, HttpServletResponse response,
+                                    FilterChain chain) throws ServletException, IOException {
+                if ("GET".equals(request.getMethod()) && request.getParameterMap().containsKey("wsdl")) {
+                    request.getRequestDispatcher("/soap/locker.wsdl").forward(request, response);
+                    return;
+                }
+                chain.doFilter(request, response);
+            }
+        });
+        return registration;
     }
 }

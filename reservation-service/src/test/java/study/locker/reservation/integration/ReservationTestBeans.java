@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @SpringBootTest(classes = ReservationApp.class, webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
         "locker.grpc.port=0", "locker.pickup.ttl=45s", "locker.pickup.max-attempts=3", "locker.outbox.scheduling=false",
         "spring.jpa.properties.hibernate.session_factory.statement_inspector=study.locker.reservation.integration.ReservationQueryIT$SqlCapture"})
-@Import(ReservationTestDatabase.class)
+@Import({ReservationTestDatabase.class, ReservationTestServer.class})
 abstract class ReservationTestBeans {
     @TestBean(methodName = "testSecrets")
     PickupSecrets secrets;
@@ -54,6 +54,8 @@ abstract class ReservationTestBeans {
 
     static JwtDecoder testIdentity() {
         return token -> switch (token) {
+            case "invalid-token" ->
+                    throw new org.springframework.security.oauth2.jwt.BadJwtException("Invalid test token");
             case "courier" -> actor(token, "locker.read locker.deposit");
             case "courier-no-read" -> actor(token, "locker.deposit");
             case "alice-unverified" -> Jwt.withTokenValue("fixture").header("alg", "RS256").subject("alice")
